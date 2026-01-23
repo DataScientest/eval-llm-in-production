@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from middleware.metrics import metrics_middleware
+from middleware.request_limits import request_limits_middleware
 from middleware.security import security_middleware
 from middleware.shutdown import shutdown_middleware
 from routers.auth import router as auth_router
@@ -47,6 +48,9 @@ def create_app() -> FastAPI:
 
     # Add shutdown middleware FIRST (outermost layer for graceful shutdown)
     app.middleware("http")(shutdown_middleware)
+
+    # Add request limits middleware (body size, etc.)
+    app.middleware("http")(request_limits_middleware)
 
     # Add metrics middleware
     app.middleware("http")(metrics_middleware)
