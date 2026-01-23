@@ -1,0 +1,208 @@
+services:
+  # MLflow experiment initialization
+  mlflow-init:
+    build:
+      context: .
+      dockerfile: ./src/api/Dockerfile
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - mlflow
+    volumes:
+      - ./scripts:/app/scripts
+    networks:
+      - llmops-network
+    command: ["python", "/app/scripts/init_mlflow_experiments.py"]
+    restart: "no"  # Run once and exit
+
+  # Qdrant collections initialization
+  qdrant-init:
+    image: curlimages/curl:8.4.0
+    depends_on:
+      - qdrant
+    volumes:
+      - ./scripts:/scripts
+    networks:
+      - llmops-network
+    command: ["sh", "/scripts/init-qdrant.sh"]
+    restart: "no"  # Run once and exit
+
+  # FastAPI application
+  api:
+    build:
+      context: .
+      dockerfile: ./src/api/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - LITELLM_URL=http://litellm:4000
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - QDRANT_URL=http://qdrant:6333
+      - TEI_URL=http://tei-embeddings:80
+    depends_on:
+      - litellm
+      - mlflow
+      - mlflow-init
+      - qdrant
+      - qdrant-init
+      - tei-embeddings
+    volumes:
+      - .:/app
+      - ./mlflow-data:/mlflow-data
+    working_dir: /app/src/api
+    networks:
+      - llmops-network
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Text Embeddings Inference (TEI) server for local embeddings
+  tei-embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    platform: linux/amd64
+    ports:
+      - "8080:80"
+    environment:
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+      - HUGGINGFACE_HUB_CACHE=/data
+      - HF_HOME=/data
+    volumes:
+      - tei_model_cache:/data
+    networks:
+      - llmops-network
+    command: ["--model-id", "sentence-transformers/all-MiniLM-L6-v2", "--hostname", "0.0.0.0"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # LiteLLM proxy with local embedding server
+  litellm:
+    build:
+      context: .
+      dockerfile: ./litellm/Dockerfile
+    ports:
+      - "8001:4000"  # LiteLLM on port 4000
+    environment:
+      # API Keys for the different models
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - LITELLM_LOG=${LITELLM_LOG}
+      - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
+      # Qdrant configuration
+      - QDRANT_URL=http://qdrant:6333
+      # MLflow configuration for native tracing
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - MLFLOW_EXPERIMENT_NAME=llmops-litellm-security
+    volumes:
+    # OR (the one below for information): - ./litellm/litellm-config.yaml:/app/config.yaml
+      - ./litellm/litellm-config-security.yaml:/app/config.yaml
+    command: ["--config", "/app/config.yaml"]
+    networks:
+      - llmops-network
+    depends_on:
+      - mlflow
+      - mlflow-init
+      - tei-embeddings
+      - qdrant
+      - qdrant-init
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MLflow for prompt tracing
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./mlflow-data:/mlflow-data
+    networks:
+      - llmops-network
+    command: >
+      mlflow server 
+      --host 0.0.0.0 
+      --port 5000 
+      --backend-store-uri sqlite:///mlflow-data/mlflow.db 
+      --default-artifact-root file:///mlflow-data/mlartifacts 
+      --serve-artifacts
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - llmops-network
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - llmops-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Qdrant vector database for semantic caching
+  qdrant:
+    image: qdrant/qdrant:v1.15.1
+    container_name: llmops-qdrant
+    ports:
+      - "6333:6333"  # Qdrant API port (includes web UI at /dashboard)
+      - "6334:6334"  # Qdrant gRPC port  
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - llmops-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+networks:
+  llmops-network:
+    driver: bridge
+
+volumes:
+  qdrant_data:
+  tei_model_cache:
+  prometheus_data:
+  grafana_data:
