@@ -1,8 +1,9 @@
-"""LLM operations router with timeouts and circuit breaker."""
+"""LLM operations router with timeouts, circuit breaker, and retry logic."""
 
 import asyncio
 import logging
 import time
+import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -16,9 +17,10 @@ from config.settings import settings
 from fastapi import APIRouter, Depends, HTTPException, status
 from models.llm_models import ModelsResponse, SecurePromptRequest, SecurePromptResponse
 from services.auth_service import verify_token
-from services.circuit_breaker import CircuitBreakerError, litellm_circuit
+from services.circuit_breaker import litellm_circuit
 from services.mlflow_service import mlflow_service
 from services.security_service import security_metrics
+from utils.retry import calculate_backoff_delay, retry_with_backoff
 
 from litellm import completion_cost
 
@@ -29,6 +31,17 @@ router = APIRouter(prefix="/llm", tags=["llm"])
 # Timeout configuration
 CONNECT_TIMEOUT = 5.0  # 5 seconds for connection
 REQUEST_TIMEOUT = 30.0  # 30 seconds for request completion
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0  # 1 second
+
+# Retryable OpenAI exceptions (transient errors)
+RETRYABLE_OPENAI_ERRORS = (
+    openai.APIConnectionError,
+    openai.APITimeoutError,
+    openai.InternalServerError,
+)
 
 # Configure OpenAI client to use LiteLLM proxy WITH TIMEOUTS
 client = openai.OpenAI(
@@ -45,24 +58,115 @@ cache = ExactCache(
 )
 
 
+def generate_incident_id() -> str:
+    """Generate a unique incident ID for error tracking."""
+    return f"inc_{uuid.uuid4().hex[:12]}"
+
+
+def create_error_response(
+    error_type: str,
+    message: str,
+    status_code: int,
+    incident_id: Optional[str] = None,
+    **extra_fields,
+) -> dict:
+    """Create a standardized error response with incident tracking."""
+    response = {
+        "error": error_type,
+        "message": message,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+    if incident_id:
+        response["incident_id"] = incident_id
+    response.update(extra_fields)
+    return response
+
+
+async def call_llm_with_retry(litellm_params: dict) -> Any:
+    """
+    Call LLM with retry logic for transient errors.
+
+    Implements exponential backoff with jitter for retries.
+    """
+    last_exception = None
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            # Use asyncio timeout for additional protection
+            async with asyncio.timeout(REQUEST_TIMEOUT + 5):
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(
+                    None, lambda: client.chat.completions.create(**litellm_params)
+                )
+                return response
+
+        except RETRYABLE_OPENAI_ERRORS as e:
+            last_exception = e
+
+            if attempt >= MAX_RETRIES:
+                logger.error(
+                    f"All {MAX_RETRIES + 1} attempts failed: {type(e).__name__}: {e}"
+                )
+                raise
+
+            delay = calculate_backoff_delay(
+                attempt=attempt,
+                base_delay=RETRY_BASE_DELAY,
+            )
+
+            logger.warning(
+                f"Attempt {attempt + 1}/{MAX_RETRIES + 1} failed: {type(e).__name__}. "
+                f"Retrying in {delay:.2f}s..."
+            )
+
+            await asyncio.sleep(delay)
+
+        except asyncio.TimeoutError:
+            # Timeout is also retryable
+            last_exception = asyncio.TimeoutError(
+                f"Request timed out after {REQUEST_TIMEOUT}s"
+            )
+
+            if attempt >= MAX_RETRIES:
+                logger.error(f"All {MAX_RETRIES + 1} attempts timed out")
+                raise
+
+            delay = calculate_backoff_delay(
+                attempt=attempt, base_delay=RETRY_BASE_DELAY
+            )
+            logger.warning(
+                f"Attempt {attempt + 1}/{MAX_RETRIES + 1} timed out. "
+                f"Retrying in {delay:.2f}s..."
+            )
+            await asyncio.sleep(delay)
+
+    # Should not reach here
+    if last_exception:
+        raise last_exception
+
+
 @router.post("/generate", response_model=SecurePromptResponse)
 async def generate_secure_prompt(
     request: SecurePromptRequest, current_user: Dict[str, Any] = Depends(verify_token)
 ):
-    """Generate text using LLM with built-in security guardrails, timeouts, and circuit breaker."""
+    """Generate text using LLM with security guardrails, timeouts, retry, and circuit breaker."""
     start_time = time.time()
+    incident_id = None
 
     # Check circuit breaker before making request
     if not await litellm_circuit.can_execute():
-        logger.warning("LiteLLM circuit breaker is open, failing fast")
+        incident_id = generate_incident_id()
+        logger.warning(f"[{incident_id}] LiteLLM circuit breaker is open, failing fast")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "error": "Service temporarily unavailable",
-                "message": "LLM service is experiencing issues. Please retry later.",
-                "circuit_state": litellm_circuit.state.value,
-                "retry_after": int(litellm_circuit.recovery_timeout),
-            },
+            detail=create_error_response(
+                error_type="ServiceUnavailable",
+                message="LLM service is experiencing issues. Please retry later.",
+                status_code=503,
+                incident_id=incident_id,
+                circuit_state=litellm_circuit.state.value,
+                retry_after=int(litellm_circuit.recovery_timeout),
+            ),
             headers={"Retry-After": str(int(litellm_circuit.recovery_timeout))},
         )
 
@@ -81,7 +185,6 @@ async def generate_secure_prompt(
             "max_tokens": request.max_tokens,
         }
 
-        # Add structured output if specified
         if request.response_format:
             litellm_params["response_format"] = request.response_format
 
@@ -107,28 +210,10 @@ async def generate_secure_prompt(
             cost = cached_response["cost"]
             guardrails_triggered = cached_response.get("guardrails_triggered", [])
         else:
-            # No exact cache hit, call LiteLLM with timeout
-            logger.debug("No exact cache hit, calling LiteLLM")
+            # No exact cache hit, call LiteLLM with retry
+            logger.debug("No exact cache hit, calling LiteLLM with retry")
 
-            try:
-                # Use asyncio timeout for additional protection
-                async with asyncio.timeout(REQUEST_TIMEOUT + 5):
-                    # The OpenAI client call is synchronous, run in executor
-                    loop = asyncio.get_event_loop()
-                    response = await loop.run_in_executor(
-                        None, lambda: client.chat.completions.create(**litellm_params)
-                    )
-            except asyncio.TimeoutError:
-                await litellm_circuit.record_failure()
-                logger.error(f"LiteLLM request timed out after {REQUEST_TIMEOUT}s")
-                raise HTTPException(
-                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                    detail={
-                        "error": "Gateway Timeout",
-                        "message": f"LLM request timed out after {REQUEST_TIMEOUT} seconds",
-                        "timeout_seconds": REQUEST_TIMEOUT,
-                    },
-                )
+            response = await call_llm_with_retry(litellm_params)
 
             # Extract response data
             response_text = response.choices[0].message.content
@@ -146,7 +231,6 @@ async def generate_secure_prompt(
                 logger.warning(f"Could not calculate cost for {request.model}: {e}")
                 cost = (prompt_tokens * 0.00001) + (completion_tokens * 0.00002)
 
-            # Check for triggered guardrails
             guardrails_triggered = []
             if hasattr(response, "guardrails_triggered"):
                 guardrails_triggered = response.guardrails_triggered
@@ -176,12 +260,11 @@ async def generate_secure_prompt(
         end_time = time.time()
         response_time = end_time - start_time
 
-        # Determine cache status
         cache_hit = cached_response is not None
         cache_latency_ms = response_time * 1000 if cached_response else None
         cache_type = "exact" if cached_response else None
 
-        # Trace in MLflow
+        # Trace in MLflow (with fallback on failure)
         try:
             tokens_dict = {
                 "prompt_tokens": prompt_tokens,
@@ -200,7 +283,9 @@ async def generate_secure_prompt(
                 cache_type=cache_type,
             )
         except Exception as e:
-            logger.warning(f"Could not trace LLM request: {e}")
+            # MLflow failure is non-critical - log and continue
+            logger.warning(f"MLflow tracing failed (non-critical): {e}")
+            # Could also write to local file as fallback here
 
         return SecurePromptResponse(
             response=response_text,
@@ -214,62 +299,141 @@ async def generate_secure_prompt(
         )
 
     except HTTPException:
-        # Re-raise HTTP exceptions as-is
         raise
+
+    except asyncio.TimeoutError as e:
+        await litellm_circuit.record_failure(e)
+        security_metrics["blocked_requests"] += 1
+        incident_id = generate_incident_id()
+        logger.error(f"[{incident_id}] LiteLLM request timed out after retries: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=create_error_response(
+                error_type="GatewayTimeout",
+                message=f"LLM request timed out after {MAX_RETRIES + 1} attempts",
+                status_code=504,
+                incident_id=incident_id,
+                timeout_seconds=REQUEST_TIMEOUT,
+                attempts=MAX_RETRIES + 1,
+            ),
+        )
+
     except openai.APITimeoutError as e:
         await litellm_circuit.record_failure(e)
         security_metrics["blocked_requests"] += 1
-        logger.error(f"LiteLLM timeout: {e}")
+        incident_id = generate_incident_id()
+        logger.error(f"[{incident_id}] LiteLLM timeout after retries: {e}")
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail={
-                "error": "Gateway Timeout",
-                "message": f"LLM service timed out after {REQUEST_TIMEOUT} seconds",
-            },
+            detail=create_error_response(
+                error_type="GatewayTimeout",
+                message="LLM service timed out",
+                status_code=504,
+                incident_id=incident_id,
+            ),
         )
+
     except openai.APIConnectionError as e:
         await litellm_circuit.record_failure(e)
         security_metrics["blocked_requests"] += 1
-        logger.error(f"LiteLLM connection error: {e}")
+        incident_id = generate_incident_id()
+        logger.error(f"[{incident_id}] LiteLLM connection error after retries: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={
-                "error": "Bad Gateway",
-                "message": "Could not connect to LLM service",
-            },
+            detail=create_error_response(
+                error_type="BadGateway",
+                message="Could not connect to LLM service after multiple attempts",
+                status_code=502,
+                incident_id=incident_id,
+            ),
         )
+
     except openai.RateLimitError as e:
         security_metrics["blocked_requests"] += 1
-        logger.warning(f"Rate limit exceeded: {e}")
+        incident_id = generate_incident_id()
+        logger.warning(f"[{incident_id}] Rate limit exceeded: {e}")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={
-                "error": "Rate Limit Exceeded",
-                "message": "Too many requests. Please try again later.",
-                "retry_after": 60,
-            },
+            detail=create_error_response(
+                error_type="RateLimitExceeded",
+                message="Too many requests. Please try again later.",
+                status_code=429,
+                incident_id=incident_id,
+                retry_after=60,
+            ),
             headers={"Retry-After": "60"},
         )
+
     except openai.BadRequestError as e:
         security_metrics["blocked_requests"] += 1
-        logger.warning(f"Bad request: {e}")
+        incident_id = generate_incident_id()
+        logger.warning(f"[{incident_id}] Bad request: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "Bad Request",
-                "message": str(e),
-            },
+            detail=create_error_response(
+                error_type="BadRequest",
+                message=str(e),
+                status_code=400,
+                incident_id=incident_id,
+            ),
         )
+
+    except openai.AuthenticationError as e:
+        security_metrics["blocked_requests"] += 1
+        incident_id = generate_incident_id()
+        logger.error(f"[{incident_id}] Authentication error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=create_error_response(
+                error_type="AuthenticationError",
+                message="LLM service authentication failed",
+                status_code=401,
+                incident_id=incident_id,
+            ),
+        )
+
+    except openai.PermissionDeniedError as e:
+        security_metrics["blocked_requests"] += 1
+        incident_id = generate_incident_id()
+        logger.error(f"[{incident_id}] Permission denied: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=create_error_response(
+                error_type="PermissionDenied",
+                message="Access to requested model denied",
+                status_code=403,
+                incident_id=incident_id,
+            ),
+        )
+
+    except openai.NotFoundError as e:
+        security_metrics["blocked_requests"] += 1
+        incident_id = generate_incident_id()
+        logger.warning(f"[{incident_id}] Model not found: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=create_error_response(
+                error_type="NotFound",
+                message=f"Model '{request.model}' not found",
+                status_code=404,
+                incident_id=incident_id,
+                requested_model=request.model,
+            ),
+        )
+
     except Exception as e:
         await litellm_circuit.record_failure(e)
         security_metrics["blocked_requests"] += 1
-        logger.error(f"Error generating response: {e}")
+        incident_id = generate_incident_id()
+        logger.error(f"[{incident_id}] Unexpected error: {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": "Internal Server Error",
-                "message": "Failed to generate response. Please try again.",
-            },
+            detail=create_error_response(
+                error_type="InternalServerError",
+                message="An unexpected error occurred. Please try again.",
+                status_code=500,
+                incident_id=incident_id,
+            ),
         )
 
 
