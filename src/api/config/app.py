@@ -72,8 +72,59 @@ def create_app() -> FastAPI:
             "version": settings.API_VERSION,
             "docs": "/docs",
             "redoc": "/redoc",
-            "timestamp": datetime.now(),
+            "health": "/health",
+            "health_detailed": "/health/detailed",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
         }
+
+    # Root-level health endpoints for Docker/Kubernetes
+    @app.get("/health", tags=["health"])
+    async def root_health():
+        """
+        Basic liveness check at root level.
+
+        For Docker healthcheck and load balancer probes.
+        Always returns 200 if the application is running.
+        """
+        return {
+            "status": "alive",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+
+    @app.get("/health/detailed", tags=["health"])
+    async def root_health_detailed():
+        """
+        Detailed readiness check at root level.
+
+        Redirects to /system/health/detailed for full dependency checks.
+        """
+        from fastapi.responses import JSONResponse
+        from services.health_checker import health_checker
+
+        results = await health_checker.check_all(use_cache=True)
+
+        checks = {}
+        for service_name, result in results.items():
+            checks[service_name] = {
+                "healthy": result.healthy,
+                "latency_ms": round(result.latency_ms, 2)
+                if result.latency_ms
+                else None,
+                "message": result.message,
+            }
+
+        all_healthy = all(r.healthy for r in results.values())
+
+        response_data = {
+            "status": "healthy" if all_healthy else "degraded",
+            "checks": checks,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+
+        return JSONResponse(
+            status_code=200 if all_healthy else 503,
+            content=response_data,
+        )
 
     # Add OpenAI-compatible endpoint at root level
     @app.get("/v1/models")
