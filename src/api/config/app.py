@@ -1,23 +1,24 @@
 """Application factory for creating FastAPI instances."""
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-
-from config.settings import settings
-from config.lifespan import lifespan
-from middleware.security import security_middleware
+from fastapi.middleware.cors import CORSMiddleware
 from middleware.metrics import metrics_middleware
+from middleware.security import security_middleware
+from middleware.shutdown import shutdown_middleware
 from routers.auth import router as auth_router
 from routers.llm import router as llm_router
-from routers.system import router as system_router
 from routers.monitoring import router as monitoring_router
+from routers.system import router as system_router
 from utils.exceptions import validation_exception_handler
+
+from config.lifespan import lifespan
+from config.settings import settings
 
 
 def create_app() -> FastAPI:
     """Create and configure FastAPI application."""
-    
+
     # Create FastAPI application with custom docs URLs to ensure CDN resources load
     app = FastAPI(
         title=settings.API_TITLE,
@@ -31,8 +32,8 @@ def create_app() -> FastAPI:
             "defaultModelsExpandDepth": 2,
             "defaultModelExpandDepth": 2,
             "displayOperationId": False,
-            "tryItOutEnabled": True
-        }
+            "tryItOutEnabled": True,
+        },
     )
 
     # Add CORS middleware
@@ -44,9 +45,12 @@ def create_app() -> FastAPI:
         allow_headers=settings.CORS_HEADERS,
     )
 
-    # Add metrics middleware FIRST (outer layer)
+    # Add shutdown middleware FIRST (outermost layer for graceful shutdown)
+    app.middleware("http")(shutdown_middleware)
+
+    # Add metrics middleware
     app.middleware("http")(metrics_middleware)
-    
+
     # Add security middleware
     app.middleware("http")(security_middleware)
 
@@ -55,16 +59,16 @@ def create_app() -> FastAPI:
 
     # Add root endpoint for Swagger access
     from datetime import datetime
-    
+
     @app.get("/")
     async def root():
         """Root endpoint providing a welcome message and API information."""
         return {
             "message": "LLMOps Secure API is running!",
             "version": settings.API_VERSION,
-            "docs": "/docs", 
+            "docs": "/docs",
             "redoc": "/redoc",
-            "timestamp": datetime.now()
+            "timestamp": datetime.now(),
         }
 
     # Add OpenAI-compatible endpoint at root level
@@ -73,12 +77,15 @@ def create_app() -> FastAPI:
         """OpenAI-compatible models endpoint at root level."""
         try:
             import requests
+
             from config.settings import settings
+
             response = requests.get(f"{settings.LITELLM_URL}/models")
             response.raise_for_status()
             return response.json()
         except Exception as e:
             from fastapi import HTTPException
+
             raise HTTPException(status_code=500, detail=f"Error fetching models: {e}")
 
     # Include routers
