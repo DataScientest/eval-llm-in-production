@@ -1,18 +1,22 @@
 """Environment validation utilities for startup checks."""
 
+import logging
 import os
 import sys
 from typing import List, Tuple
 
+logger = logging.getLogger(__name__)
 
-def validate_required_env_vars() -> Tuple[bool, List[str]]:
+
+def validate_required_env_vars() -> Tuple[bool, List[str], List[str]]:
     """
     Validate that all required environment variables are set.
 
     Returns:
-        Tuple of (is_valid, list_of_errors)
+        Tuple of (is_valid, list_of_errors, list_of_warnings)
     """
     errors = []
+    warnings = []
 
     # Required variables
     required_vars = [
@@ -50,7 +54,6 @@ def validate_required_env_vars() -> Tuple[bool, List[str]]:
         )
 
     # Warnings for missing optional vars (don't fail, just log)
-    warnings = []
     for var_name, description in recommended_vars:
         if not os.getenv(var_name):
             warnings.append(f"Missing optional: {var_name} - {description}")
@@ -65,23 +68,41 @@ def validate_environment_on_startup():
     """
     is_valid, errors, warnings = validate_required_env_vars()
 
-    # Print warnings (non-fatal)
+    # Log warnings (non-fatal)
     for warning in warnings:
-        print(f"WARNING: {warning}")
+        logger.warning(warning)
 
-    # Print errors and exit if invalid
+    # Log errors and exit if invalid
     if not is_valid:
-        print("\n" + "=" * 60)
-        print("CONFIGURATION ERROR - Application cannot start")
-        print("=" * 60)
+        # Use print for startup errors since logging might not be fully configured
+        # and we want to ensure the user sees these critical messages
+        error_msg = [
+            "",
+            "=" * 60,
+            "CONFIGURATION ERROR - Application cannot start",
+            "=" * 60,
+        ]
         for error in errors:
-            print(f"  - {error}")
-        print("=" * 60)
-        print("\nPlease set the required environment variables and try again.")
-        print("You can use a .env file or set them in your environment.")
-        print("\nExample .env file:")
-        print("  JWT_SECRET_KEY=your-secure-random-key-at-least-32-chars")
-        print("=" * 60 + "\n")
+            error_msg.append(f"  - {error}")
+        error_msg.extend(
+            [
+                "=" * 60,
+                "",
+                "Please set the required environment variables and try again.",
+                "You can use a .env file or set them in your environment.",
+                "",
+                "Example .env file:",
+                "  JWT_SECRET_KEY=your-secure-random-key-at-least-32-chars",
+                "=" * 60,
+                "",
+            ]
+        )
+
+        # Log as critical
+        for line in error_msg:
+            if line:
+                logger.critical(line)
+
         sys.exit(1)
 
-    print("Environment validation passed")
+    logger.info("Environment validation passed")

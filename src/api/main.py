@@ -1,5 +1,10 @@
 """Main FastAPI application entry point."""
 
+# Configure logging FIRST (before any other imports that might log)
+from config.logging_config import setup_logging
+
+setup_logging()
+
 # Validate environment before anything else
 from config.env_validator import validate_environment_on_startup
 

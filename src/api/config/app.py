@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from middleware.metrics import metrics_middleware
+from middleware.request_id import request_id_middleware
 from middleware.request_limits import request_limits_middleware
 from middleware.security import security_middleware
 from middleware.shutdown import shutdown_middleware
@@ -48,6 +49,9 @@ def create_app() -> FastAPI:
 
     # Add shutdown middleware FIRST (outermost layer for graceful shutdown)
     app.middleware("http")(shutdown_middleware)
+
+    # Add request ID middleware (for tracing)
+    app.middleware("http")(request_id_middleware)
 
     # Add request limits middleware (body size, etc.)
     app.middleware("http")(request_limits_middleware)

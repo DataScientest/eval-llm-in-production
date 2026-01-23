@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -12,6 +13,8 @@ import mlflow
 from config.settings import settings
 from mlflow.entities.span import SpanType
 from mlflow.entities.span_event import SpanEvent
+
+logger = logging.getLogger(__name__)
 
 
 class MLflowService:
@@ -30,26 +33,28 @@ class MLflowService:
         # Set the security experiment for API calls (should already exist from init)
         try:
             mlflow.set_experiment(self.experiment_name)
-            print(f"✅ Using MLflow experiment: {self.experiment_name}")
+            logger.info(f"Using MLflow experiment: {self.experiment_name}")
         except Exception as e:
-            print(f"⚠️ Warning: Could not set MLflow experiment: {e}")
+            logger.warning(f"Could not set MLflow experiment: {e}")
             # Fallback - try to create it
             try:
                 mlflow.create_experiment(self.experiment_name)
                 mlflow.set_experiment(self.experiment_name)
-                print(f"🆕 Created and set MLflow experiment: {self.experiment_name}")
+                logger.info(
+                    f"Created and set MLflow experiment: {self.experiment_name}"
+                )
             except Exception as create_error:
-                print(f"❌ Failed to create experiment: {create_error}")
+                logger.error(f"Failed to create experiment: {create_error}")
 
     async def log_metrics(self, metrics: dict):
         """Log metrics to MLflow."""
-        print(f"Logging metrics: {metrics}")
+        logger.debug(f"Logging metrics: {metrics}")
         # This would contain actual MLflow logging code
         pass
 
     async def log_parameters(self, parameters: dict):
         """Log parameters to MLflow."""
-        print(f"Logging parameters: {parameters}")
+        logger.debug(f"Logging parameters: {parameters}")
         # This would contain actual MLflow logging code
         pass
 
@@ -60,9 +65,9 @@ class MLflowService:
             active_run = mlflow.active_run()
             if active_run:
                 mlflow.end_run()
-                print(f"Finalized active MLflow run: {active_run.info.run_id}")
+                logger.info(f"Finalized active MLflow run: {active_run.info.run_id}")
         except Exception as e:
-            print(f"Warning: Could not finalize MLflow runs: {e}")
+            logger.warning(f"Could not finalize MLflow runs: {e}")
 
     @mlflow.trace(name="security_incident", span_type=SpanType.LLM)
     def trace_security_incident(
@@ -122,11 +127,11 @@ class MLflowService:
                     )
                 )
 
-            print(f"🚨 Security incident traced in MLflow: {incident_type}")
+            logger.warning(f"Security incident traced in MLflow: {incident_type}")
             return True
 
         except Exception as e:
-            print(f"⚠️ Failed to trace security incident: {e}")
+            logger.error(f"Failed to trace security incident: {e}")
             return False
 
     @mlflow.trace(name="llm_generation", span_type=SpanType.LLM)
@@ -162,15 +167,15 @@ class MLflowService:
             response_metadata: Optional response metadata
         """
         try:
-            print(f"🔍 Starting MLflow trace for model: {model}")
-            print(f"🔍 MLflow tracking URI: {self.tracking_uri}")
-            print(f"🔍 Current experiment: {self.experiment_name}")
+            logger.debug(f"Starting MLflow trace for model: {model}")
+            logger.debug(f"MLflow tracking URI: {self.tracking_uri}")
+            logger.debug(f"Current experiment: {self.experiment_name}")
 
             current_span = mlflow.get_current_active_span()
             current_time = time.time()
             duration_ms = (current_time - start_time) * 1000
 
-            print(f"🔍 Current span: {current_span}")
+            logger.debug(f"Current span: {current_span}")
 
             if current_span:
                 # Set parent span inputs
@@ -377,7 +382,7 @@ class MLflowService:
             }
 
         except Exception as e:
-            print(f"⚠️ Failed to trace LLM request: {e}")
+            logger.warning(f"Failed to trace LLM request: {e}")
             return False
 
     def parse_litellm_response_headers(
@@ -461,7 +466,7 @@ class MLflowService:
             return cache_info
 
         except Exception as e:
-            print(f"⚠️ Error parsing LiteLLM headers: {e}")
+            logger.warning(f"Error parsing LiteLLM headers: {e}")
             return cache_info
 
     def enhance_trace_with_cache_info(
@@ -555,7 +560,7 @@ class MLflowService:
             }
 
         except Exception as e:
-            print(f"⚠️ Error in enhanced trace with cache info: {e}")
+            logger.warning(f"Error in enhanced trace with cache info: {e}")
             # Fallback to basic tracing without cache info
             trace_result = self.trace_llm_request(
                 prompt=prompt,
@@ -652,7 +657,7 @@ class MLflowService:
             return cache_events
 
         except Exception as e:
-            print(f"⚠️ Error parsing cache logs: {e}")
+            logger.warning(f"Error parsing cache logs: {e}")
             return []
 
     def extract_cache_metrics_from_logs(self, log_content: str) -> Dict[str, Any]:
@@ -729,7 +734,7 @@ class MLflowService:
             return metrics
 
         except Exception as e:
-            print(f"⚠️ Error extracting cache metrics: {e}")
+            logger.warning(f"Error extracting cache metrics: {e}")
             return metrics
 
     def _parse_numeric_value(self, value: str) -> Optional[float]:
