@@ -1,4 +1,4 @@
-"""LLM operations router with timeouts, circuit breaker, and retry logic."""
+"""LLM operations router - thin adapter over LLMService."""
 
 import asyncio
 import logging
@@ -7,61 +7,26 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-import httpx
 import openai
 import requests
 
-# Import our exact cache
-from cache.exact_cache import ExactCache
-from config.settings import settings
 from fastapi import APIRouter, Depends, HTTPException, status
 from models.llm_models import ModelsResponse, SecurePromptRequest, SecurePromptResponse
 from services.auth_service import verify_token
 from services.circuit_breaker import litellm_circuit
+from services.llm_service import get_llm_service, LLMService
 from services.mlflow_service import mlflow_service
 from services.security_service import security_metrics
-from utils.retry import calculate_backoff_delay, retry_with_backoff
-from metrics.cache_metrics import (
-    record_cache_hit,
-    record_cache_miss,
-    update_cache_ratio,
-    record_performance_savings,
-)
-
-from litellm import completion_cost
+from metrics.cache_metrics import record_performance_savings
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/llm", tags=["llm"])
 
-# Timeout configuration
-CONNECT_TIMEOUT = 5.0  # 5 seconds for connection
-REQUEST_TIMEOUT = 30.0  # 30 seconds for request completion
-
-# Retry configuration
+# Constants for error handling
 MAX_RETRIES = 3
-RETRY_BASE_DELAY = 1.0  # 1 second
-
-# Retryable OpenAI exceptions (transient errors)
-RETRYABLE_OPENAI_ERRORS = (
-    openai.APIConnectionError,
-    openai.APITimeoutError,
-    openai.InternalServerError,
-)
-
-# Configure OpenAI client to use LiteLLM proxy WITH TIMEOUTS
-client = openai.OpenAI(
-    base_url=f"{settings.LITELLM_URL}/v1",
-    api_key="dummy-key",  # LiteLLM handles the real API keys
-    timeout=httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT),
-    max_retries=0,  # We handle retries ourselves
-)
-
-# Initialize exact cache
-cache = ExactCache(
-    qdrant_url=settings.QDRANT_URL,
-    ttl_seconds=1800,
-)
+REQUEST_TIMEOUT = 30.0
 
 
 def generate_incident_id() -> str:
@@ -88,72 +53,11 @@ def create_error_response(
     return response
 
 
-async def call_llm_with_retry(litellm_params: dict) -> Any:
-    """
-    Call LLM with retry logic for transient errors.
-
-    Implements exponential backoff with jitter for retries.
-    """
-    last_exception = None
-
-    for attempt in range(MAX_RETRIES + 1):
-        try:
-            # Use asyncio timeout for additional protection
-            async with asyncio.timeout(REQUEST_TIMEOUT + 5):
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    None, lambda: client.chat.completions.create(**litellm_params)
-                )
-                return response
-
-        except RETRYABLE_OPENAI_ERRORS as e:
-            last_exception = e
-
-            if attempt >= MAX_RETRIES:
-                logger.error(
-                    f"All {MAX_RETRIES + 1} attempts failed: {type(e).__name__}: {e}"
-                )
-                raise
-
-            delay = calculate_backoff_delay(
-                attempt=attempt,
-                base_delay=RETRY_BASE_DELAY,
-            )
-
-            logger.warning(
-                f"Attempt {attempt + 1}/{MAX_RETRIES + 1} failed: {type(e).__name__}. "
-                f"Retrying in {delay:.2f}s..."
-            )
-
-            await asyncio.sleep(delay)
-
-        except asyncio.TimeoutError:
-            # Timeout is also retryable
-            last_exception = asyncio.TimeoutError(
-                f"Request timed out after {REQUEST_TIMEOUT}s"
-            )
-
-            if attempt >= MAX_RETRIES:
-                logger.error(f"All {MAX_RETRIES + 1} attempts timed out")
-                raise
-
-            delay = calculate_backoff_delay(
-                attempt=attempt, base_delay=RETRY_BASE_DELAY
-            )
-            logger.warning(
-                f"Attempt {attempt + 1}/{MAX_RETRIES + 1} timed out. "
-                f"Retrying in {delay:.2f}s..."
-            )
-            await asyncio.sleep(delay)
-
-    # Should not reach here
-    if last_exception:
-        raise last_exception
-
-
 @router.post("/generate", response_model=SecurePromptResponse)
 async def generate_secure_prompt(
-    request: SecurePromptRequest, current_user: Dict[str, Any] = Depends(verify_token)
+    request: SecurePromptRequest,
+    current_user: Dict[str, Any] = Depends(verify_token),
+    llm_service: LLMService = Depends(get_llm_service),
 ):
     """Generate text using LLM with security guardrails, timeouts, retry, and circuit breaker."""
     start_time = time.time()
@@ -183,145 +87,53 @@ async def generate_secure_prompt(
             messages.append({"role": "system", "content": request.system_prompt})
         messages.append({"role": "user", "content": request.prompt})
 
-        # Prepare request parameters
-        litellm_params = {
-            "model": request.model,
-            "messages": messages,
-            "temperature": request.temperature,
-            "max_tokens": request.max_tokens,
-        }
-
-        if request.response_format:
-            litellm_params["response_format"] = request.response_format
-
         logger.debug(f"Making LiteLLM request with model: {request.model}")
 
-        # Create cache key from full prompt
-        full_prompt = "\n".join([msg["content"] for msg in messages])
-
-        # Try exact cache first
-        cache_lookup_start = time.time()
-        cached_response = cache.get(
-            prompt=full_prompt,
+        # Use LLM service for generation (handles caching, retries, cost calculation)
+        llm_response = await llm_service.generate(
+            messages=messages,
             model=request.model,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
+            system_prompt=request.system_prompt,
         )
-        cache_lookup_time = time.time() - cache_lookup_start
-
-        if cached_response:
-            logger.info("Exact cache hit")
-            record_cache_hit("exact", cache_lookup_time)
-            response_text = cached_response["response"]
-            prompt_tokens = cached_response["prompt_tokens"]
-            completion_tokens = cached_response["completion_tokens"]
-            total_tokens = cached_response["total_tokens"]
-            cost = cached_response["cost"]
-            guardrails_triggered = cached_response.get("guardrails_triggered", [])
-        else:
-            # No exact cache hit, call LiteLLM with retry
-            logger.debug("No exact cache hit, calling LiteLLM with retry")
-            record_cache_miss()
-
-            response = await call_llm_with_retry(litellm_params)
-
-            # Extract response data
-            response_text = response.choices[0].message.content
-            prompt_tokens = response.usage.prompt_tokens
-            completion_tokens = response.usage.completion_tokens
-            total_tokens = response.usage.total_tokens
-
-            # Calculate cost
-            try:
-                actual_model = (
-                    response.model if hasattr(response, "model") else request.model
-                )
-                cost = completion_cost(completion_response=response, model=actual_model)
-            except Exception as e:
-                logger.warning(f"Could not calculate cost for {request.model}: {e}")
-                cost = (prompt_tokens * 0.00001) + (completion_tokens * 0.00002)
-
-            guardrails_triggered = []
-            if hasattr(response, "guardrails_triggered"):
-                guardrails_triggered = response.guardrails_triggered
-
-            # Store in exact cache
-            response_data = {
-                "response": response_text,
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-                "cost": cost,
-                "guardrails_triggered": guardrails_triggered,
-            }
-
-            cache.set(
-                prompt=full_prompt,
-                model=request.model,
-                response=response_data,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-            )
-
-            # Record success for circuit breaker
-            await litellm_circuit.record_success()
-
-        # Calculate metrics
-        end_time = time.time()
-        response_time = end_time - start_time
-
-        cache_hit = cached_response is not None
-        cache_latency_ms = response_time * 1000 if cached_response else None
-        cache_type = "exact" if cached_response else None
 
         # Update cache performance metrics
-        if cache_hit:
-            # Estimate time saved (typical LLM call is ~2-5 seconds, cache hit is ~10ms)
-            estimated_llm_time_ms = 3000  # 3 seconds average
-            time_saved_ms = estimated_llm_time_ms - (cache_lookup_time * 1000)
+        if llm_response.cache_hit:
+            estimated_llm_time_ms = 3000
+            time_saved_ms = estimated_llm_time_ms - (llm_response.cache_latency_ms or 0)
             record_performance_savings("exact", time_saved_ms)
-
-        # Update cache hit ratio gauge
-        try:
-            from prometheus_client import REGISTRY
-            exact_hits = REGISTRY.get_sample_value('llmops_cache_hits_total', {'cache_type': 'exact'}) or 0
-            misses = REGISTRY.get_sample_value('llmops_cache_hits_total', {'cache_type': 'miss'}) or 0
-            update_cache_ratio(exact_hits, misses)
-        except Exception:
-            pass  # Non-critical
 
         # Trace in MLflow (with fallback on failure)
         try:
             tokens_dict = {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
+                "prompt_tokens": llm_response.prompt_tokens,
+                "completion_tokens": llm_response.completion_tokens,
+                "total_tokens": llm_response.total_tokens,
             }
             mlflow_service.trace_llm_request(
                 prompt=request.prompt,
                 model=request.model,
-                response=response_text,
+                response=llm_response.response_text,
                 tokens=tokens_dict,
-                cost=cost,
+                cost=llm_response.cost,
                 start_time=start_time,
-                cache_hit=cache_hit,
-                cache_latency_ms=cache_latency_ms,
-                cache_type=cache_type,
+                cache_hit=llm_response.cache_hit,
+                cache_latency_ms=llm_response.cache_latency_ms,
+                cache_type=llm_response.cache_type,
             )
         except Exception as e:
-            # MLflow failure is non-critical - log and continue
             logger.warning(f"MLflow tracing failed (non-critical): {e}")
-            # Could also write to local file as fallback here
 
         return SecurePromptResponse(
-            response=response_text,
+            response=llm_response.response_text,
             model=request.model,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            cost=cost,
+            prompt_tokens=llm_response.prompt_tokens,
+            completion_tokens=llm_response.completion_tokens,
+            total_tokens=llm_response.total_tokens,
+            cost=llm_response.cost,
             security_status="protected",
-            guardrails_triggered=guardrails_triggered,
+            guardrails_triggered=llm_response.guardrails_triggered,
         )
 
     except HTTPException:
@@ -465,10 +277,13 @@ async def generate_secure_prompt(
 
 # Cache management endpoints
 @router.get("/cache/stats")
-async def get_cache_stats(current_user: Dict[str, Any] = Depends(verify_token)):
+async def get_cache_stats(
+    current_user: Dict[str, Any] = Depends(verify_token),
+    llm_service: LLMService = Depends(get_llm_service),
+):
     """Get cache statistics."""
     try:
-        stats = cache.get_cache_stats()
+        stats = llm_service.get_cache_stats()
         return {"status": "success", "data": stats}
     except Exception as e:
         raise HTTPException(
@@ -479,11 +294,13 @@ async def get_cache_stats(current_user: Dict[str, Any] = Depends(verify_token)):
 
 @router.delete("/cache/clear")
 async def clear_cache(
-    cache_type: str = "all", current_user: Dict[str, Any] = Depends(verify_token)
+    cache_type: str = "all",
+    current_user: Dict[str, Any] = Depends(verify_token),
+    llm_service: LLMService = Depends(get_llm_service),
 ):
     """Clear cache collections."""
     try:
-        success = cache.clear_cache(cache_type)
+        success = llm_service._cache.clear_cache(cache_type)
         if success:
             return {
                 "status": "success",

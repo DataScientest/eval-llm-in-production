@@ -9,6 +9,10 @@ MLFLOW_URL = "http://localhost:5001"
 GRAFANA_URL = "http://localhost:3001"
 PROMETHEUS_URL = "http://localhost:9090"
 
+# Auth passwords for dev/test (bcrypt hashes generated at startup if not set)
+AUTH_ADMIN_PASSWORD = "secret123"
+AUTH_USER_PASSWORD = "password123"
+
 # =============================================================================
 # Core Tasks
 # =============================================================================
@@ -312,5 +316,19 @@ description = "Quick test (no restarts) - for CI/CD"
 run = """
 #!/usr/bin/env bash
 mise run test:ex4
+"""
+
+[tasks."test:unit"]
+description = "Run unit tests inside Docker container"
+run = """
+#!/usr/bin/env bash
+docker compose exec api bash -c "PYTHONPATH=/app/src/api pytest /app/tests/unit/ -v"
+"""
+
+[tasks."test:integration"]
+description = "Run integration tests inside Docker container"
+run = """
+#!/usr/bin/env bash
+docker compose exec api bash -c "PYTHONPATH=/app/src/api pytest /app/tests/integration/ -v"
 """
 

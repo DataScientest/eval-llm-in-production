@@ -42,6 +42,9 @@ services:
             - MLFLOW_TRACKING_URI=http://mlflow:5000
             - QDRANT_URL=http://qdrant:6333
             - TEI_URL=http://tei-embeddings:80
+            - AUTH_ADMIN_PASSWORD=${AUTH_ADMIN_PASSWORD:-secret123}
+            - AUTH_USER_PASSWORD=${AUTH_USER_PASSWORD:-password123}
+            - ENVIRONMENT=${ENVIRONMENT:-development}
         depends_on:
             - litellm
             - mlflow

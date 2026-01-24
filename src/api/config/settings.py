@@ -72,6 +72,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = True
+        extra = "ignore"  # Allow extra env vars without validation errors
 
 
 class SecurityConfig:
@@ -111,12 +112,30 @@ class SecurityConfig:
     ]
 
 
+_settings_instance: Settings = None
+
+
 def get_settings() -> Settings:
-    """Get validated settings, raising error if configuration is invalid."""
-    try:
-        return Settings()
-    except Exception as e:
-        raise SystemExit(f"Configuration error: {e}")
+    """Get validated settings (dependency injection compatible)."""
+    global _settings_instance
+    if _settings_instance is None:
+        try:
+            _settings_instance = Settings()
+        except Exception as e:
+            raise SystemExit(f"Configuration error: {e}")
+    return _settings_instance
+
+
+def set_settings(new_settings: Settings) -> None:
+    """Override settings instance (for testing)."""
+    global _settings_instance
+    _settings_instance = new_settings
+
+
+def reset_settings() -> None:
+    """Reset settings to reload from environment (for testing)."""
+    global _settings_instance
+    _settings_instance = None
 
 
 def get_default_model(litellm_url: str) -> str:
