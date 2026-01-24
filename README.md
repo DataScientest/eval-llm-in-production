@@ -4,16 +4,12 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 
-An **LLMOps production readiness exam** covering configuration management, graceful shutdown, fault tolerance, error handling, health checks, and structured logging.
+An **LLMOps exam** covering configuration management, graceful shutdown, fault tolerance, error handling, health checks, and structured logging.
 
-## Exam Structure
-
-| Branch | Purpose |
-|--------|---------|
-| `student` | Broken code + instructions in `EXAM.md` |
-| `main` | Complete corrections + grading guide in `CORRECTION.md` |
 
 ### 6 Exercises
+
+The detailed exam instructions are available in the [EXAM.md](docs/EXAM.md) file.
 
 | # | Topic | Key Concepts |
 |---|-------|--------------|
@@ -24,9 +20,10 @@ An **LLMOps production readiness exam** covering configuration management, grace
 | 5 | Health Checks | Liveness vs readiness, dependency verification |
 | 6 | Structured Logging | JSON logging, request ID tracing |
 
----
 
 ## Quick Start
+
+Mise can be used to launch the stack and run tests but it is not required.
 
 ### Prerequisites
 
@@ -61,7 +58,6 @@ make -f Makefile.curl status   # alternative
 | Qdrant Dashboard | http://localhost:6333/dashboard |
 | LiteLLM UI | http://localhost:8001 |
 
----
 
 ## Testing the Exercises
 
@@ -178,11 +174,10 @@ docker compose logs api | grep "test-request-123"
 # Expected: All logs for this request share the same request_id
 ```
 
----
 
 ## Project Structure
 
-```
+```sh
 ├── EXAM.md                         # Student instructions
 ├── CORRECTION.md                   # Grading guide (main branch only)
 ├── .env.example                    # Environment template
@@ -214,11 +209,10 @@ docker compose logs api | grep "test-request-123"
 └── tests/                          # Test suite
 ```
 
----
 
 ## Architecture
 
-```
+```sh
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Client Request                          │
 └──────────────────────────────┬──────────────────────────────────┘
@@ -264,7 +258,6 @@ docker compose logs api | grep "test-request-123"
 └─────────────────────────────────────────────────────────────────┘
 ```
 
----
 
 ## Maintenance Commands
 
@@ -283,16 +276,29 @@ curl -s http://localhost:8000/health/detailed -H "Authorization: Bearer $TOKEN" 
 docker compose down -v
 ```
 
----
 
 ## Grading
 
-See `CORRECTION.md` (main branch) for the complete grading rubric.
+### Validation Thresholds
+- **Minimum 60 points (60%)** to pass
+- **80 points (80%)** for distinction
+- **90 points (90%)** for excellence
+
+### Validation Rules
+- **Core exercises required**: At least 2 of [Ex1, Ex2, Ex6] must be complete
+- **Partial credit**: 50% points for functional but incomplete implementations
+- **Bonus**: +5 points for comprehensive documentation
+
+### Automated Validation
+```bash
+# 80% threshold = 4.8/6 exercises must pass
+mise run test:all && echo "✅ Validation candidate"
+```
 
 **Total: 100 points**
-- Exercise 1: 15 pts
-- Exercise 2: 15 pts
-- Exercise 3: 20 pts
-- Exercise 4: 15 pts
-- Exercise 5: 15 pts
-- Exercise 6: 20 pts
+- Exercise 1: 15 pts (Core - Security)
+- Exercise 2: 15 pts (Core - Stability)  
+- Exercise 3: 20 pts (Resilience)
+- Exercise 4: 15 pts (Robustness)
+- Exercise 5: 15 pts (Monitoring)
+- Exercise 6: 20 pts (Core - Observability)

@@ -7,9 +7,7 @@ Vous avez devant vous une stack LLMOps complète avec cache, sécurité et monit
 Votre mission: **identifier et corriger ces 6 problèmes**.
 
 ### Format de l'Examen
-- **Type**: Take-home exam (rendu GitHub)
-- **Livrable**: Repository GitHub avec vos corrections
-- **Correction**: `git diff` entre votre solution et la référence
+- **Type**: Take-home exam (archive)
 
 ### Workflow Recommandé
 ```bash
@@ -28,7 +26,6 @@ $ git merge fix/structured-logging
 $ git push origin main
 ```
 
----
 
 ## Exercice 1: Configuration Sécurisée et Validation d'Environnement (15 pts)
 
@@ -65,7 +62,6 @@ $ docker compose up api
 # Attendu: Error: JWT_SECRET_KEY must be set and different from default
 ```
 
----
 
 ## Exercice 2: Graceful Shutdown et Resource Cleanup (15 pts)
 
@@ -115,7 +111,6 @@ Closing Qdrant connections...
 Graceful shutdown completed in 2.3s
 ```
 
----
 
 ## Exercice 3: Request Timeouts et Resource Limits (15 pts)
 
@@ -158,7 +153,6 @@ $ dd if=/dev/zero bs=1M count=10 | curl -X POST ... --data-binary @-
 # Attendu: 413 Payload Too Large
 ```
 
----
 
 ## Exercice 4: Error Handling et Retry Logic (20 pts)
 
@@ -219,7 +213,6 @@ Attempt 2: Success
 }
 ```
 
----
 
 ## Exercice 5: Health Checks Complets (15 pts)
 
@@ -275,7 +268,6 @@ $ curl http://localhost:8000/health/detailed
 }
 ```
 
----
 
 ## Exercice 6: Structured Logging et Observabilité (20 pts)
 
@@ -330,7 +322,6 @@ $ docker compose logs api | jq 'select(.request_id == "req_abc123")'
 # Tous les logs de cette requête
 ```
 
----
 
 ## Barème
 
@@ -344,7 +335,6 @@ $ docker compose logs api | jq 'select(.request_id == "req_abc123")'
 | 6. Structured Logging | 20 | JSON logs, request ID, niveaux |
 | **Total** | **100** | |
 
----
 
 ## Livrables Attendus
 
@@ -382,7 +372,6 @@ Créer un fichier `IMPLEMENTATION.md` avec pour chaque exercice:
 - Solution implémentée
 - Commandes de vérification
 
----
 
 ## Ressources
 
@@ -391,7 +380,6 @@ Créer un fichier `IMPLEMENTATION.md` avec pour chaque exercice:
 - Python Logging: https://docs.python.org/3/library/logging.html
 - Tenacity (retry): https://tenacity.readthedocs.io
 
----
 
 ## Checklist Finale
 
