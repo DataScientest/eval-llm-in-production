@@ -1,17 +1,12 @@
 # 🧪 Tests Suite
 
-This directory contains comprehensive tests for the LLMOps security stack.
+This directory contains tests for verifying your exam solutions.
 
 ## 📂 Directory Structure
 
 ```
 tests/
-├── conftest.py                     # Shared pytest fixtures
-├── unit/                           # Fast, isolated unit tests (22 tests)
-│   └── services/
-│       ├── test_auth_service.py    # Auth/JWT/password hashing tests
-│       └── test_llm_service.py     # LLM service/retry/DI tests
-├── integration/                    # Tests requiring running services
+├── integration/                    # Integration tests
 │   ├── test_auth_endpoints.py      # JWT auth flow
 │   ├── test_cache_endpoints.py     # Cache behavior
 │   └── test_api_endpoints.py       # API endpoints
@@ -23,17 +18,7 @@ tests/
 
 ## 🚀 Running Tests
 
-### Unit Tests (runs inside Docker)
-```bash
-mise run test:unit
-```
-
-### Integration Tests (requires running services)
-```bash
-mise run test:integration
-```
-
-### Exercise Tests (lifecycle testing)
+### Exercise Verification
 ```bash
 mise run test:all    # All 6 exercises
 mise run test:ex1    # Secure Configuration
@@ -53,11 +38,17 @@ mise run test:ex6    # Structured Logging
 ## 📋 Prerequisites
 
 - Docker stack running: `docker compose up -d`
-- All services healthy: `mise run status`
+- All services healthy
 
-## 🔗 Related Files
+## 📝 Adding Your Own Tests
 
-- `src/api/services/llm_service.py` - LLM service with retry/cache logic
-- `src/api/services/auth_service.py` - Authentication with bcrypt
-- `src/api/cache/exact_cache.py` - Exact cache implementation
-- `mise.toml` - Test task definitions
+As you implement each exercise, consider adding tests to verify your solutions:
+
+```
+tests/
+├── unit/                           # Create this for your unit tests
+│   └── services/
+│       ├── test_auth_service.py    # Test your auth improvements
+│       └── test_retry.py           # Test your retry logic
+└── conftest.py                     # Shared fixtures
+```

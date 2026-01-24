@@ -1,78 +1,45 @@
-"""Application settings and configuration with Pydantic validation."""
+"""Application settings and configuration.
+
+TODO Exercise 1: This configuration has security issues!
+- JWT_SECRET_KEY has an insecure default value
+- CORS_ORIGINS allows all origins with ["*"]
+- No validation of environment variables at startup
+
+Students should:
+- Migrate to pydantic.BaseSettings with proper validation
+- Remove insecure defaults and require JWT_SECRET_KEY via environment
+- Restrict CORS to specific origins
+- Add fail-fast validation for required secrets
+"""
 
 import os
 from typing import List
 
-import requests
-from pydantic import AnyHttpUrl, Field, field_validator
-from pydantic_settings import BaseSettings
 
+# INSECURE: Hardcoded secret key visible in source code!
+JWT_SECRET_KEY = "your-secret-key-change-in-production"
+JWT_ALGORITHM = "HS256"
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
-class Settings(BaseSettings):
-    """Application settings with environment variable validation."""
+# INSECURE: Allows ALL origins - vulnerable to CSRF attacks!
+CORS_ORIGINS = ["*"]
+CORS_CREDENTIALS = True
+CORS_METHODS = ["GET", "POST", "PUT", "DELETE"]
+CORS_HEADERS = ["*"]
 
-    # API Settings
-    API_TITLE: str = "LLMOps Secure API"
-    API_DESCRIPTION: str = "Secure API for interacting with LLMs via LiteLLM with built-in security guardrails."
-    API_VERSION: str = "1.0.0"
+# API Settings
+API_TITLE = "LLMOps Secure API"
+API_DESCRIPTION = "Secure API for interacting with LLMs via LiteLLM with built-in security guardrails."
+API_VERSION = "1.0.0"
 
-    # CORS Settings - secure defaults
-    CORS_ORIGINS: List[str] = Field(
-        default=["http://localhost:3000", "http://localhost:8000"],
-        description="Allowed CORS origins (do NOT use ['*'] in production)",
-    )
-    CORS_CREDENTIALS: bool = True
-    CORS_METHODS: List[str] = ["GET", "POST", "PUT", "DELETE"]
-    CORS_HEADERS: List[str] = ["Authorization", "Content-Type"]
+# External Services
+LITELLM_URL = os.getenv("LITELLM_URL", "http://litellm:8000")
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 
-    # External Services
-    LITELLM_URL: str = Field(
-        default="http://litellm:8000", description="LiteLLM proxy URL"
-    )
-    MLFLOW_TRACKING_URI: str = Field(
-        default="http://mlflow:5000", description="MLflow tracking server URI"
-    )
-
-    # JWT Settings - NO default for secret key!
-    JWT_SECRET_KEY: str = Field(
-        ...,  # Required, no default
-        description="Secret key for JWT signing (must be set via environment)",
-    )
-    JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
-
-    # Qdrant Settings
-    QDRANT_URL: str = Field(default="http://qdrant:6333")
-    TEI_URL: str = Field(default="http://tei-embeddings:80")
-    CACHE_TTL: int = Field(default=1800, ge=60, le=86400)  # 1min to 24h
-
-    @field_validator("JWT_SECRET_KEY")
-    @classmethod
-    def validate_jwt_secret(cls, v: str) -> str:
-        """Ensure JWT secret is not the insecure default."""
-        insecure_defaults = [
-            "your-secret-key-change-in-production",
-            "secret",
-            "changeme",
-            "your-secret-key",
-            "",
-        ]
-        if v.lower() in [d.lower() for d in insecure_defaults]:
-            raise ValueError(
-                "JWT_SECRET_KEY must be set to a secure value. "
-                "Do not use default or common values."
-            )
-        if len(v) < 32:
-            raise ValueError(
-                "JWT_SECRET_KEY must be at least 32 characters long for security."
-            )
-        return v
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
-        extra = "ignore"  # Allow extra env vars without validation errors
+# Qdrant Settings
+QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
+TEI_URL = os.getenv("TEI_URL", "http://tei-embeddings:80")
+CACHE_TTL = 1800
 
 
 class SecurityConfig:
@@ -112,40 +79,14 @@ class SecurityConfig:
     ]
 
 
-_settings_instance: Settings = None
-
-
-def get_settings() -> Settings:
-    """Get validated settings (dependency injection compatible)."""
-    global _settings_instance
-    if _settings_instance is None:
-        try:
-            _settings_instance = Settings()
-        except Exception as e:
-            raise SystemExit(f"Configuration error: {e}")
-    return _settings_instance
-
-
-def set_settings(new_settings: Settings) -> None:
-    """Override settings instance (for testing)."""
-    global _settings_instance
-    _settings_instance = new_settings
-
-
-def reset_settings() -> None:
-    """Reset settings to reload from environment (for testing)."""
-    global _settings_instance
-    _settings_instance = None
-
-
 def get_default_model(litellm_url: str) -> str:
     """Get the best available model based on priority."""
+    import requests
     try:
         response = requests.get(f"{litellm_url}/models", timeout=5)
         response.raise_for_status()
         available_models = [model["id"] for model in response.json().get("data", [])]
 
-        # Priority order: Groq Kimi first, then fallbacks
         priority_models = [
             "groq-kimi-primary",
             "gpt-4o-secondary",
@@ -163,6 +104,24 @@ def get_default_model(litellm_url: str) -> str:
     return "groq-kimi-primary"
 
 
-# Create settings instance at module load
-# This will fail fast if configuration is invalid
-settings = get_settings()
+# Simple settings object for compatibility
+class _Settings:
+    """Simple settings wrapper - TODO Exercise 1: Replace with pydantic BaseSettings."""
+    JWT_SECRET_KEY = JWT_SECRET_KEY
+    JWT_ALGORITHM = JWT_ALGORITHM
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES = JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+    CORS_ORIGINS = CORS_ORIGINS
+    CORS_CREDENTIALS = CORS_CREDENTIALS
+    CORS_METHODS = CORS_METHODS
+    CORS_HEADERS = CORS_HEADERS
+    API_TITLE = API_TITLE
+    API_DESCRIPTION = API_DESCRIPTION
+    API_VERSION = API_VERSION
+    LITELLM_URL = LITELLM_URL
+    MLFLOW_TRACKING_URI = MLFLOW_TRACKING_URI
+    QDRANT_URL = QDRANT_URL
+    TEI_URL = TEI_URL
+    CACHE_TTL = CACHE_TTL
+
+
+settings = _Settings()

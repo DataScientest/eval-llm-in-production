@@ -1,17 +1,22 @@
-"""System router with comprehensive health checks."""
+"""System router.
 
-import logging
+TODO Exercise 5: Health check doesn't verify dependencies!
+- Always returns "healthy" even when Qdrant/LiteLLM/MLflow are down
+- Load balancer keeps sending traffic to broken instance
+- No distinction between liveness and readiness
+
+Students should:
+- Create /health for basic liveness (app is running)
+- Create /health/detailed for readiness (dependencies checked)
+- Cache health check results (30s TTL)
+- Return 503 if any dependency is unhealthy
+"""
+
 from datetime import datetime
-from typing import Optional
 
-import httpx
 from config.settings import SecurityConfig, settings
-from fastapi import APIRouter, Query
-from fastapi.responses import JSONResponse
-from services.health_checker import health_checker
+from fastapi import APIRouter
 from services.security_service import security_metrics
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -19,84 +24,17 @@ router = APIRouter(prefix="/system", tags=["system"])
 @router.get("/health")
 async def health_check():
     """
-    Basic liveness health check.
-
-    This endpoint always returns 200 OK if the application is running.
-    It does NOT check dependencies - use /health/detailed for that.
-
-    Use this endpoint for:
-    - Kubernetes liveness probes
-    - Load balancer basic health checks
-    - Quick "is the app alive" checks
+    Health check endpoint.
+    
+    TODO Exercise 5: This is a FAKE health check!
+    It always returns "healthy" without checking any dependencies.
+    If Qdrant or LiteLLM is down, this still says healthy!
     """
+    # TODO Exercise 5: Should check dependencies!
     return {
-        "status": "alive",
+        "status": "healthy",
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }
-
-
-@router.get("/health/detailed")
-async def detailed_health_check(
-    refresh: bool = Query(False, description="Force refresh cached results"),
-):
-    """
-    Detailed readiness health check with dependency verification.
-
-    Checks all external dependencies:
-    - Qdrant (vector database)
-    - LiteLLM (LLM proxy)
-    - MLflow (tracking server)
-    - TEI (embeddings service)
-
-    Returns 200 if all dependencies are healthy, 503 if any are unhealthy.
-    Results are cached for 30 seconds to prevent overwhelming dependencies.
-
-    Use this endpoint for:
-    - Kubernetes readiness probes
-    - Monitoring systems
-    - Debugging connectivity issues
-
-    Args:
-        refresh: Set to true to bypass cache and force fresh checks
-    """
-    # Perform health checks
-    results = await health_checker.check_all(use_cache=not refresh)
-
-    # Convert results to serializable format
-    checks = {}
-    for service_name, result in results.items():
-        checks[service_name] = {
-            "healthy": result.healthy,
-            "latency_ms": round(result.latency_ms, 2) if result.latency_ms else None,
-            "message": result.message,
-            "checked_at": result.checked_at.isoformat() + "Z",
-        }
-
-    # Determine overall status
-    all_healthy = all(r.healthy for r in results.values())
-
-    # Calculate summary
-    healthy_count = sum(1 for r in results.values() if r.healthy)
-    total_count = len(results)
-
-    response_data = {
-        "status": "healthy" if all_healthy else "degraded",
-        "summary": {
-            "healthy_services": healthy_count,
-            "total_services": total_count,
-            "all_healthy": all_healthy,
-        },
-        "checks": checks,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-    }
-
-    # Return 503 if any dependency is unhealthy
-    status_code = 200 if all_healthy else 503
-
-    return JSONResponse(
-        status_code=status_code,
-        content=response_data,
-    )
 
 
 @router.get("/debug")
