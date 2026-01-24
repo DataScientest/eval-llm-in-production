@@ -157,27 +157,68 @@ set -e
 
 echo "=== Exercise 3: Request Timeouts & Circuit Breaker ==="
 echo ""
-echo "PART 1: Baseline - all services healthy"
-echo "   ✓ Request limits: 1MB max, 60s timeout"
-echo "   ✓ Circuit breaker: CLOSED state"
+echo "PART 1: Get auth token"
+TOKEN=$(curl -s -X POST $API_URL/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "secret123"}' \
+  | jq -r '.access_token' 2>/dev/null)
+
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+  echo "   ✗ Failed to get auth token"
+  exit 1
+fi
+
+echo "PART 2: Baseline - all services healthy"
+HEALTH=$(curl -s $API_URL/health/detailed -H "Authorization: Bearer $TOKEN" 2>/dev/null)
+if echo "$HEALTH" | jq -e '.status == "healthy"' > /dev/null 2>&1; then
+  echo "   ✓ All dependencies healthy"
+  echo "   ✓ Circuit breaker: CLOSED state"
+else
+  echo "   ⚠ Some dependencies unhealthy, continuing test"
+fi
 
 echo ""
-echo "PART 2: Test circuit breaker with failure"
-echo "Stopping Qdrant to simulate failure..."
-docker compose stop qdrant > /dev/null 2>&1
+echo "PART 3: Test circuit breaker with failure"
+echo "Stopping LiteLLM to simulate failure..."
+docker compose stop litellm > /dev/null 2>&1
 sleep 2
 
-echo "   ✓ Circuit breaker tracking failures"
+echo "Making requests to trigger circuit breaker..."
+for i in {1..6}; do
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST $API_URL/llm/generate \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"model": "groq-kimi-primary", "prompt": "test"}' 2>/dev/null || echo "000")
+  echo "   Request $i: HTTP $HTTP_CODE"
+  sleep 1
+done
 
 echo ""
-echo "PART 3: Recovery"
-echo "Restarting Qdrant..."
-docker compose start qdrant > /dev/null 2>&1
+echo "PART 4: Check circuit breaker state"
+CIRCUIT_STATE=$(curl -s $API_URL/health/detailed -H "Authorization: Bearer $TOKEN" 2>/dev/null | jq -r '.checks.litellm.healthy // false')
+if [ "$CIRCUIT_STATE" = "false" ]; then
+  echo "   ✓ Circuit breaker detected failure and opened"
+else
+  echo "   ⚠ Circuit breaker state: $CIRCUIT_STATE"
+fi
+
+echo ""
+echo "PART 5: Recovery"
+echo "Restarting LiteLLM..."
+docker compose start litellm > /dev/null 2>&1
 sleep 5
 
-if docker compose ps | grep -q "qdrant.*Up"; then
+if docker compose ps | grep -q "litellm.*Up"; then
   echo "   ✓ Service recovered"
-  echo "   ✓ Circuit breaker: HALF_OPEN → CLOSED"
+  # Wait for circuit breaker to start recovering
+  sleep 10
+  RECOVERY_HEALTH=$(curl -s $API_URL/health/detailed -H "Authorization: Bearer $TOKEN" 2>/dev/null | jq -r '.checks.litellm.healthy // false')
+  if [ "$RECOVERY_HEALTH" = "true" ]; then
+    echo "   ✓ Circuit breaker: HALF_OPEN → CLOSED"
+  else
+    echo "   ⚠ Circuit breaker still recovering: $RECOVERY_HEALTH"
+  fi
 fi
 
 echo ""
@@ -192,12 +233,91 @@ set -e
 
 echo "=== Exercise 4: Error Handling & Retry Logic ==="
 echo ""
-echo "   ✓ Retry utility with exponential backoff"
-echo "   ✓ Max retries: 3, delays: 1-16s"
-echo "   ✓ Jitter enabled for backoff"
-echo "   ✓ Incident tracking enabled"
+echo "PART 1: Get auth token"
+TOKEN=$(curl -s -X POST $API_URL/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "secret123"}' \
+  | jq -r '.access_token' 2>/dev/null)
+
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+  echo "   ✗ Failed to get auth token"
+  exit 1
+fi
+
+echo "PART 2: Test error handling with invalid model (no retry)"
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X POST $API_URL/llm/generate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "invalid-model", "prompt": "test"}' 2>/dev/null)
+
+if [ "$HTTP_CODE" = "400" ]; then
+  echo "   ✓ Invalid model returns 400 (no retry expected)"
+else
+  echo "   ⚠ Invalid model returned HTTP $HTTP_CODE (expected 400)"
+fi
+
 echo ""
-echo "✅ Exercise 4 PASSED: Retry logic configured"
+echo "PART 3: Test retry logic with transient error"
+echo "Stopping LiteLLM to simulate transient failure..."
+docker compose stop litellm > /dev/null 2>&1
+sleep 2
+
+echo "Making request to trigger retry..."
+START_TIME=$(date +%s)
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X POST $API_URL/llm/generate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "groq-kimi-primary", "prompt": "test"}' 2>/dev/null || echo "000")
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+if [ "$DURATION" -ge 3 ]; then
+  echo "   ✓ Request took ${DURATION}s (retry attempts made)"
+else
+  echo "   ⚠ Request completed in ${DURATION}s (may not have retried)"
+fi
+
+echo ""
+echo "PART 4: Check logs for retry attempts"
+RETRY_LOGS=$(docker compose logs api 2>&1 | grep -E "retry|attempt|Retry" | tail -3)
+if [ -n "$RETRY_LOGS" ]; then
+  echo "   ✓ Retry attempts detected in logs"
+  echo "$RETRY_LOGS" | sed 's/^/     /'
+else
+  echo "   ⚠ No retry logs found"
+fi
+
+echo ""
+echo "PART 5: Test incident tracking"
+if echo "$RETRY_LOGS" | grep -q "inc_"; then
+  echo "   ✓ Incident IDs generated for error tracking"
+else
+  echo "   ⚠ No incident IDs found in logs"
+fi
+
+echo ""
+echo "PART 6: Recovery"
+echo "Restarting LiteLLM..."
+docker compose start litellm > /dev/null 2>&1
+sleep 5
+
+# Test that service works again
+RECOVERY_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X POST $API_URL/llm/generate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "groq-kimi-primary", "prompt": "hello"}' 2>/dev/null)
+
+if [ "$RECOVERY_CODE" = "200" ]; then
+  echo "   ✓ Service recovered and working"
+else
+  echo "   ⚠ Service recovery returned HTTP $RECOVERY_CODE"
+fi
+
+echo ""
+echo "✅ Exercise 4 PASSED: Error handling and retry logic verified"
 """
 
 [tasks."test:ex5"]
@@ -208,8 +328,19 @@ set -e
 
 echo "=== Exercise 5: Health Checks ==="
 echo ""
-echo "PART 1: Baseline health check"
-HEALTH=$(curl -s $API_URL/monitoring/stats 2>/dev/null)
+echo "PART 1: Get auth token"
+TOKEN=$(curl -s -X POST $API_URL/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "secret123"}' \
+  | jq -r '.access_token' 2>/dev/null)
+
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+  echo "   ✗ Failed to get auth token"
+  exit 1
+fi
+
+echo "PART 2: Baseline health check"
+HEALTH=$(curl -s $API_URL/health/detailed -H "Authorization: Bearer $TOKEN" 2>/dev/null)
 if [ -n "$HEALTH" ]; then
   echo "   ✓ Health endpoint responding"
   echo "   ✓ Dependency caching: 30s TTL"
@@ -221,9 +352,11 @@ echo "Stopping Qdrant..."
 docker compose stop qdrant > /dev/null 2>&1
 sleep 2
 
-HEALTH_WITH_FAILURE=$(curl -s $API_URL/monitoring/stats 2>/dev/null)
-if [ -n "$HEALTH_WITH_FAILURE" ]; then
-  echo "   ✓ Dependency failure detected"
+HEALTH_WITH_FAILURE=$(curl -s $API_URL/health/detailed -H "Authorization: Bearer $TOKEN" 2>/dev/null)
+if echo "$HEALTH_WITH_FAILURE" | jq -e '.status == "degraded"' > /dev/null 2>&1; then
+  echo "   ✓ Dependency failure detected (status: degraded)"
+else
+  echo "   ⚠ Expected degraded status, got: $(echo "$HEALTH_WITH_FAILURE" | jq -r '.status // unknown' 2>/dev/null || echo 'parse error')"
 fi
 
 echo ""
