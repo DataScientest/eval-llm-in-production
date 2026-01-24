@@ -3,13 +3,16 @@
 import time
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-from prometheus_client import Counter, Histogram, Gauge
+from prometheus_client import Counter, Histogram
 import logging
 from typing import Union
 
 logger = logging.getLogger(__name__)
 
-# Prometheus metrics
+# =============================================================================
+# REQUEST METRICS (kept here - middleware-specific)
+# =============================================================================
+
 REQUEST_COUNT = Counter(
     'llmops_requests_total', 
     'Total requests', 
@@ -34,35 +37,22 @@ RESPONSE_SIZE = Histogram(
     ['method', 'endpoint']
 )
 
-# Cache-specific metrics
-CACHE_HITS = Counter(
-    'llmops_cache_hits_total',
-    'Total cache hits by type',
-    ['cache_type']  # 'exact', 'semantic', 'miss'
-)
-
-CACHE_LATENCY = Histogram(
-    'llmops_cache_latency_seconds',
-    'Cache lookup latency in seconds',
-    ['cache_type']  # 'exact', 'semantic'
-)
-
-CACHE_SIMILARITY_SCORE = Histogram(
-    'llmops_cache_similarity_score',
-    'Semantic cache similarity scores',
-    buckets=(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1.0)
-)
-
-CACHE_SIMILARITY_QUALITY = Counter(
-    'llmops_cache_similarity_quality_total',
-    'Count of semantic cache hits by similarity quality',
-    ['quality']  # 'excellent', 'good', 'fair', 'poor'
-)
-
-# Additional gauge metric that the dashboard expects
-CACHE_AVG_SEMANTIC_SIMILARITY = Gauge(
-    'llmops_cache_avg_semantic_similarity',
-    'Average semantic similarity score for cache hits'
+# =============================================================================
+# CACHE METRICS - imported from centralized module
+# =============================================================================
+from metrics.cache_metrics import (
+    CACHE_HITS,
+    CACHE_LATENCY,
+    CACHE_SIMILARITY_SCORE,
+    CACHE_SIMILARITY_QUALITY,
+    CACHE_HIT_RATIO,
+    CACHE_PERFORMANCE_SAVINGS,
+    CACHE_AVG_SEMANTIC_SIMILARITY,
+    record_cache_hit,
+    record_cache_miss,
+    update_cache_ratio,
+    record_performance_savings,
+    record_semantic_similarity,
 )
 
 def _get_endpoint_from_request(request: Request) -> str:

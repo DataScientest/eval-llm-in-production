@@ -21,6 +21,12 @@ from services.circuit_breaker import litellm_circuit
 from services.mlflow_service import mlflow_service
 from services.security_service import security_metrics
 from utils.retry import calculate_backoff_delay, retry_with_backoff
+from metrics.cache_metrics import (
+    record_cache_hit,
+    record_cache_miss,
+    update_cache_ratio,
+    record_performance_savings,
+)
 
 from litellm import completion_cost
 
@@ -194,15 +200,18 @@ async def generate_secure_prompt(
         full_prompt = "\n".join([msg["content"] for msg in messages])
 
         # Try exact cache first
+        cache_lookup_start = time.time()
         cached_response = cache.get(
             prompt=full_prompt,
             model=request.model,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
         )
+        cache_lookup_time = time.time() - cache_lookup_start
 
         if cached_response:
             logger.info("Exact cache hit")
+            record_cache_hit("exact", cache_lookup_time)
             response_text = cached_response["response"]
             prompt_tokens = cached_response["prompt_tokens"]
             completion_tokens = cached_response["completion_tokens"]
@@ -212,6 +221,7 @@ async def generate_secure_prompt(
         else:
             # No exact cache hit, call LiteLLM with retry
             logger.debug("No exact cache hit, calling LiteLLM with retry")
+            record_cache_miss()
 
             response = await call_llm_with_retry(litellm_params)
 
@@ -263,6 +273,22 @@ async def generate_secure_prompt(
         cache_hit = cached_response is not None
         cache_latency_ms = response_time * 1000 if cached_response else None
         cache_type = "exact" if cached_response else None
+
+        # Update cache performance metrics
+        if cache_hit:
+            # Estimate time saved (typical LLM call is ~2-5 seconds, cache hit is ~10ms)
+            estimated_llm_time_ms = 3000  # 3 seconds average
+            time_saved_ms = estimated_llm_time_ms - (cache_lookup_time * 1000)
+            record_performance_savings("exact", time_saved_ms)
+
+        # Update cache hit ratio gauge
+        try:
+            from prometheus_client import REGISTRY
+            exact_hits = REGISTRY.get_sample_value('llmops_cache_hits_total', {'cache_type': 'exact'}) or 0
+            misses = REGISTRY.get_sample_value('llmops_cache_hits_total', {'cache_type': 'miss'}) or 0
+            update_cache_ratio(exact_hits, misses)
+        except Exception:
+            pass  # Non-critical
 
         # Trace in MLflow (with fallback on failure)
         try:

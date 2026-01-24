@@ -12,6 +12,18 @@ from services.security_service import rate_limit_storage, security_metrics
 logger = logging.getLogger(__name__)
 
 
+
+# Paths that don't require security checks (e.g., auth endpoints)
+SECURITY_CHECK_WHITELIST = {
+    "/auth/login",
+    "/auth/register", 
+    "/auth/me",
+    "/health",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+}
+
 async def security_middleware(request: Request, call_next):
     """Security middleware with enhanced request validation and rate limiting."""
     # Get client IP for security tracking
@@ -95,6 +107,24 @@ async def security_middleware(request: Request, call_next):
         (r"(?i)(\b(and|or)\s+\d+\s*=\s*\d+)", "sql_boolean_manipulation"),
         (r"(?i)(\b(union|select).*\b(from|where)\b)", "sql_union_injection"),
     ]
+
+        # Skip security checks for whitelisted endpoints
+    if request.url.path in SECURITY_CHECK_WHITELIST:
+        response = await call_next(request)
+        # Still add security headers
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
+        if request.url.path in ["/docs", "/redoc"]:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:; font-src 'self' https://cdn.jsdelivr.net"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = "default-src 'self'"
+        return response
 
     try:
         # Check URL query parameters

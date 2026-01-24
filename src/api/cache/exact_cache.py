@@ -197,10 +197,20 @@ class ExactCache:
             # Get collection info from Qdrant
             collection_info = self.qdrant_client.get_collection(self.collection_name)
             
+            # Handle both old and new Qdrant client API versions
+            # In newer versions, vectors_count is in collection_info.points_count
+            vectors_count = getattr(collection_info, 'vectors_count', None)
+            if vectors_count is None:
+                vectors_count = getattr(collection_info, 'points_count', 0)
+            
+            indexed_vectors_count = getattr(collection_info, 'indexed_vectors_count', None)
+            if indexed_vectors_count is None:
+                indexed_vectors_count = vectors_count
+            
             return {
                 "collection_name": self.collection_name,
-                "vectors_count": collection_info.vectors_count,
-                "indexed_vectors_count": collection_info.indexed_vectors_count, 
+                "vectors_count": vectors_count,
+                "indexed_vectors_count": indexed_vectors_count, 
                 "points_count": collection_info.points_count,
                 "vector_dimensions": VECTOR_DIMENSIONS,
                 "ttl_seconds": self.ttl

@@ -22,7 +22,6 @@ CACHE_TTL_SECONDS = 30  # Cache health results for 30 seconds
 @dataclass
 class HealthCheckResult:
     """Result of a health check."""
-    healthy: bool
 
     healthy: bool
     latency_ms: Optional[float] = None
@@ -35,6 +34,7 @@ class HealthCheckResult:
 class CachedHealthResult:
     """Cached health check result with TTL."""
 
+    result: HealthCheckResult
     cached_at: float = field(default_factory=time.time)
 
     def is_expired(self, ttl: float = CACHE_TTL_SECONDS) -> bool:

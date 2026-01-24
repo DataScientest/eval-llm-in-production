@@ -32,6 +32,7 @@ An **LLMOps production readiness exam** covering configuration management, grace
 
 - Docker & Docker Compose
 - curl and jq (for testing)
+- [mise](https://mise.jdx.dev/) (optional, for automated testing)
 - API Keys: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`
 
 ### Launch Stack
@@ -41,11 +42,13 @@ An **LLMOps production readiness exam** covering configuration management, grace
 cp .env.example .env
 # Edit .env with your API keys (JWT_SECRET_KEY is required)
 
-# 2. Launch services
-docker compose up -d --build
+# 2. Launch services (choose one)
+docker compose up -d --build   # standard
+mise run up                    # with mise
 
 # 3. Verify deployment
-make -f Makefile.curl status
+mise run status                # with mise
+make -f Makefile.curl status   # alternative
 ```
 
 ### Access Points
@@ -62,7 +65,31 @@ make -f Makefile.curl status
 
 ## Testing the Exercises
 
-### Get Authentication Token
+### Automated Testing with mise
+
+```bash
+# Install mise: https://mise.jdx.dev/getting-started.html
+
+# Run all exercise tests
+mise run test:all
+
+# Run individual exercise tests
+mise run test:ex1    # Secure Configuration
+mise run test:ex2    # Graceful Shutdown
+mise run test:ex3    # Request Timeouts & Circuit Breaker
+mise run test:ex4    # Error Handling & Retry
+mise run test:ex5    # Health Checks
+mise run test:ex6    # Structured Logging
+
+# Other useful commands
+mise run status      # Check all services
+mise run logs        # View API logs
+mise run token       # Get JWT token
+```
+
+### Manual Testing
+
+#### Get Authentication Token
 
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
@@ -71,7 +98,7 @@ TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
   | jq -r '.access_token')
 ```
 
-### Exercise 1: Secure Configuration
+#### Exercise 1: Secure Configuration
 
 ```bash
 # Missing JWT_SECRET_KEY should fail at startup

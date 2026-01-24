@@ -82,7 +82,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "llmops_cache_hit_ratio{cache_type=\"exact\"}",
+          "expr": "llmops_cache_hit_ratio{cache_type=\"exact\"} or vector(0)",
           "interval": "",
           "legendFormat": "Exact Cache Hit Ratio",
           "refId": "A"
@@ -105,18 +105,9 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 0.2
-              },
-              {
-                "color": "green",
-                "value": 0.4
-              }
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "green", "value": 0.8}
             ]
           },
           "unit": "percentunit",
@@ -125,34 +116,19 @@
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 0
-      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
       "id": 2,
       "options": {
         "orientation": "auto",
-        "reduceOptions": {
-          "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": ""
-        },
+        "reduceOptions": {"values": false, "calcs": ["lastNotNull"], "fields": ""},
         "showThresholdLabels": false,
         "showThresholdMarkers": true
       },
       "pluginVersion": "9.0.0",
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "expr": "llmops_cache_hit_ratio{cache_type=\"semantic\"}",
-          "interval": "",
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "expr": "llmops_cache_hit_ratio{cache_type=\"semantic\"} or vector(0)",
           "legendFormat": "Semantic Cache Hit Ratio",
           "refId": "A"
         }
@@ -267,75 +243,6 @@
       ],
       "title": "Cache Hit/Miss Rate",
       "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 0.75
-              },
-              {
-                "color": "green",
-                "value": 0.85
-              }
-            ]
-          },
-          "unit": "percentunit",
-          "max": 1,
-          "min": 0
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 8
-      },
-      "id": 4,
-      "options": {
-        "orientation": "auto",
-        "reduceOptions": {
-          "values": false,
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": ""
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true
-      },
-      "pluginVersion": "9.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "expr": "llmops_cache_avg_semantic_similarity",
-          "interval": "",
-          "legendFormat": "Average Semantic Similarity",
-          "refId": "A"
-        }
-      ],
-      "title": "Average Semantic Similarity Score",
-      "type": "gauge"
     },
     {
       "datasource": {
@@ -522,124 +429,6 @@
       ],
       "title": "Cache Performance Savings",
       "type": "gauge"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "bars",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "vis": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 24
-      },
-      "id": 7,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "expr": "llmops_cache_similarity_quality_total{quality=\"excellent\"}",
-          "interval": "",
-          "legendFormat": "Excellent (≥0.95)",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "expr": "llmops_cache_similarity_quality_total{quality=\"good\"}",
-          "interval": "",
-          "legendFormat": "Good (0.85-0.94)",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "expr": "llmops_cache_similarity_quality_total{quality=\"fair\"}",
-          "interval": "",
-          "legendFormat": "Fair (0.75-0.84)",
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "expr": "llmops_cache_similarity_quality_total{quality=\"poor\"}",
-          "interval": "",
-          "legendFormat": "Poor (<0.75)",
-          "refId": "D"
-        }
-      ],
-      "title": "Semantic Cache Quality Distribution",
-      "type": "timeseries"
     },
     {
       "datasource": {

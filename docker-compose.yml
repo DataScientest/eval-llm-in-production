@@ -35,6 +35,9 @@ services:
         ports:
             - "8000:8000"
         environment:
+            - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - GROQ_API_KEY=${GROQ_API_KEY}
             - LITELLM_URL=http://litellm:4000
             - MLFLOW_TRACKING_URI=http://mlflow:5000
             - QDRANT_URL=http://qdrant:6333
@@ -63,7 +66,7 @@ services:
 
     # Text Embeddings Inference (TEI) server for local embeddings
     tei-embeddings:
-        image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+        image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
         platform: linux/amd64
         ports:
             - "8080:80"
@@ -103,7 +106,7 @@ services:
             - GEMINI_API_KEY=${GEMINI_API_KEY}
             - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
             - GROQ_API_KEY=${GROQ_API_KEY}
-            - LITELLM_LOG=${LITELLM_LOG}
+            - LITELLM_LOG=${LITELLM_LOG:-INFO}
             - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY}
             # Qdrant configuration
             - QDRANT_URL=http://qdrant:6333
@@ -131,7 +134,7 @@ services:
 
     # MLflow for prompt tracing
     mlflow:
-        image: ghcr.io/mlflow/mlflow:latest
+        image: ghcr.io/mlflow/mlflow:v3.9.0rc0
         ports:
             - "5001:5000"
         volumes:
@@ -142,13 +145,14 @@ services:
             mlflow server
             --host 0.0.0.0
             --port 5000
+            --allowed-hosts "*"
             --backend-store-uri sqlite:///mlflow-data/mlflow.db
             --default-artifact-root file:///mlflow-data/mlartifacts
             --serve-artifacts
 
     # Prometheus for metrics collection
     prometheus:
-        image: prom/prometheus:latest
+        image: prom/prometheus:v3.2.1
         ports:
             - "9090:9090"
         volumes:
@@ -167,9 +171,9 @@ services:
 
     # Grafana for visualization
     grafana:
-        image: grafana/grafana:latest
+        image: grafana/grafana:11.5.2
         ports:
-            - "3000:3000"
+            - "3001:3000"
         volumes:
             - grafana_data:/var/lib/grafana
             - ./monitoring/grafana/provisioning:/etc/grafana/provisioning

@@ -160,7 +160,6 @@ async def security_metrics_endpoint():
     recent_incidents = [
         incident
         for incident in security_metrics["security_incidents"]
-        if (current_time - datetime.fromisoformat(incident["timestamp"])).total_seconds()
         if (
             current_time - datetime.fromisoformat(incident["timestamp"])
         ).total_seconds()
@@ -180,6 +179,7 @@ async def security_metrics_endpoint():
             "prompt_injections_detected": security_metrics[
                 "prompt_injections_detected"
             ],
+            "content_moderation_triggered": security_metrics[
                 "content_moderation_triggered"
             ],
             "rate_limit_violations": security_metrics["rate_limit_violations"],
