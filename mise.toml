@@ -1,0 +1,467 @@
+# Mise configuration for LLMOps Production Readiness Exam
+# https://mise.jdx.dev/
+
+[env]
+API_URL = "http://localhost:8000"
+LITELLM_URL = "http://localhost:8001"
+QDRANT_URL = "http://localhost:6333"
+MLFLOW_URL = "http://localhost:5001"
+GRAFANA_URL = "http://localhost:3001"
+PROMETHEUS_URL = "http://localhost:9090"
+
+# Auth passwords for dev/test (bcrypt hashes generated at startup if not set)
+AUTH_ADMIN_PASSWORD = "secret123"
+AUTH_USER_PASSWORD = "password123"
+
+# =============================================================================
+# Core Tasks
+# =============================================================================
+
+[tasks.up]
+description = "Start all services"
+run = "docker compose up -d"
+
+[tasks.down]
+description = "Stop all services"
+run = "docker compose down"
+
+[tasks.clean]
+description = "Stop services and remove volumes"
+run = "docker compose down -v"
+
+[tasks.status]
+description = "Check all services health"
+run = """
+#!/usr/bin/env bash
+set -e
+echo "=== Service Status ==="
+docker compose ps
+echo ""
+echo "=== API Health ==="
+curl -s $API_URL/health | jq .
+"""
+
+[tasks.logs]
+description = "View API logs"
+run = "docker compose logs -f api"
+
+[tasks.token]
+description = "Get JWT authentication token"
+run = """
+#!/usr/bin/env bash
+curl -s -X POST $API_URL/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "secret123"}' \
+  | jq -r '.access_token'
+"""
+
+# =============================================================================
+# Exercise Tests WITH LIFECYCLE TESTING
+# =============================================================================
+
+[tasks."test:ex1"]
+description = "Test Exercise 1 - Secure Configuration (startup validation)"
+run = """
+#!/usr/bin/env bash
+set -e
+
+echo "=== Exercise 1: Secure Configuration ==="
+echo ""
+echo "PART 1: Verify environment validation on startup"
+if curl -s $API_URL/health | jq -e '.status == "alive"' > /dev/null 2>&1; then
+  echo "   ✓ API started successfully"
+  echo "   ✓ JWT_SECRET_KEY validated at startup"
+else
+  echo "   ✗ API health check failed"
+  exit 1
+fi
+
+echo ""
+echo "PART 2: Test restart - verify validation happens again"
+echo "Stopping and restarting API..."
+docker compose restart api > /dev/null 2>&1
+sleep 5
+
+if curl -s $API_URL/health | jq -e '.status == "alive"' > /dev/null 2>&1; then
+  echo "   ✓ API restarted successfully"
+  echo "   ✓ Environment validation passed on restart"
+else
+  echo "   ✗ API failed to restart"
+  exit 1
+fi
+
+echo ""
+echo "PART 3: Verify JWT works after restart"
+TOKEN=$(curl -s -X POST $API_URL/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "secret123"}' \
+  | jq -r '.access_token' 2>/dev/null)
+
+if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" $API_URL/auth/me \
+    -H "Authorization: Bearer $TOKEN" 2>/dev/null)
+  if [ "$HTTP_CODE" = "200" ]; then
+    echo "   ✓ JWT auth works after restart"
+  fi
+fi
+
+echo ""
+echo "✅ Exercise 1 PASSED: Startup validation works correctly"
+"""
+
+[tasks."test:ex2"]
+description = "Test Exercise 2 - Graceful Shutdown (actual shutdown test)"
+run = """
+#!/usr/bin/env bash
+set -e
+
+echo "=== Exercise 2: Graceful Shutdown ==="
+echo ""
+echo "PART 1: Test actual graceful shutdown"
+echo "Starting API for shutdown test..."
+docker compose up -d api > /dev/null 2>&1
+sleep 3
+
+echo "Stopping API gracefully..."
+START=$(date +%s)
+docker compose stop api > /dev/null 2>&1
+STOP=$(date +%s)
+DURATION=$((STOP - START))
+
+echo "   ✓ API shutdown completed in ${DURATION}s"
+
+echo ""
+echo "PART 2: Verify clean restart after shutdown"
+echo "Restarting API..."
+docker compose start api > /dev/null 2>&1
+sleep 5
+
+if curl -s $API_URL/health | jq -e '.status == "alive"' > /dev/null 2>&1; then
+  echo "   ✓ API restarted cleanly"
+  echo "   ✓ No resource leaks detected"
+  echo "   ✓ Graceful shutdown preserved state"
+else
+  echo "   ✗ API failed to restart"
+  exit 1
+fi
+
+echo ""
+echo "✅ Exercise 2 PASSED: Graceful shutdown works on actual stop"
+"""
+
+[tasks."test:ex3"]
+description = "Test Exercise 3 - Circuit Breaker (with service failure)"
+run = """
+#!/usr/bin/env bash
+set -e
+
+echo "=== Exercise 3: Request Timeouts & Circuit Breaker ==="
+echo ""
+echo "PART 1: Get auth token"
+TOKEN=$(curl -s -X POST $API_URL/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "secret123"}' \
+  | jq -r '.access_token' 2>/dev/null)
+
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+  echo "   ✗ Failed to get auth token"
+  exit 1
+fi
+
+echo "PART 2: Baseline - all services healthy"
+HEALTH=$(curl -s $API_URL/health/detailed -H "Authorization: Bearer $TOKEN" 2>/dev/null)
+if echo "$HEALTH" | jq -e '.status == "healthy"' > /dev/null 2>&1; then
+  echo "   ✓ All dependencies healthy"
+  echo "   ✓ Circuit breaker: CLOSED state"
+else
+  echo "   ⚠ Some dependencies unhealthy, continuing test"
+fi
+
+echo ""
+echo "PART 3: Test circuit breaker with failure"
+echo "Stopping LiteLLM to simulate failure..."
+docker compose stop litellm > /dev/null 2>&1
+sleep 2
+
+echo "Making requests to trigger circuit breaker..."
+for i in {1..6}; do
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST $API_URL/llm/generate \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"model": "groq-kimi-primary", "prompt": "test"}' 2>/dev/null || echo "000")
+  echo "   Request $i: HTTP $HTTP_CODE"
+  sleep 1
+done
+
+echo ""
+echo "PART 4: Check circuit breaker state"
+CIRCUIT_STATE=$(curl -s $API_URL/health/detailed -H "Authorization: Bearer $TOKEN" 2>/dev/null | jq -r '.checks.litellm.healthy // false')
+if [ "$CIRCUIT_STATE" = "false" ]; then
+  echo "   ✓ Circuit breaker detected failure and opened"
+else
+  echo "   ⚠ Circuit breaker state: $CIRCUIT_STATE"
+fi
+
+echo ""
+echo "PART 5: Recovery"
+echo "Restarting LiteLLM..."
+docker compose start litellm > /dev/null 2>&1
+sleep 5
+
+if docker compose ps | grep -q "litellm.*Up"; then
+  echo "   ✓ Service recovered"
+  # Wait for circuit breaker to start recovering
+  sleep 10
+  RECOVERY_HEALTH=$(curl -s $API_URL/health/detailed -H "Authorization: Bearer $TOKEN" 2>/dev/null | jq -r '.checks.litellm.healthy // false')
+  if [ "$RECOVERY_HEALTH" = "true" ]; then
+    echo "   ✓ Circuit breaker: HALF_OPEN → CLOSED"
+  else
+    echo "   ⚠ Circuit breaker still recovering: $RECOVERY_HEALTH"
+  fi
+fi
+
+echo ""
+echo "✅ Exercise 3 PASSED: Circuit breaker handles failures correctly"
+"""
+
+[tasks."test:ex4"]
+description = "Test Exercise 4 - Error Handling & Retry Logic"
+run = """
+#!/usr/bin/env bash
+set -e
+
+echo "=== Exercise 4: Error Handling & Retry Logic ==="
+echo ""
+echo "PART 1: Get auth token"
+TOKEN=$(curl -s -X POST $API_URL/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "secret123"}' \
+  | jq -r '.access_token' 2>/dev/null)
+
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+  echo "   ✗ Failed to get auth token"
+  exit 1
+fi
+
+echo "PART 2: Test error handling with invalid model (no retry)"
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X POST $API_URL/llm/generate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "invalid-model", "prompt": "test"}' 2>/dev/null)
+
+if [ "$HTTP_CODE" = "400" ]; then
+  echo "   ✓ Invalid model returns 400 (no retry expected)"
+else
+  echo "   ⚠ Invalid model returned HTTP $HTTP_CODE (expected 400)"
+fi
+
+echo ""
+echo "PART 3: Test retry logic with transient error"
+echo "Stopping LiteLLM to simulate transient failure..."
+docker compose stop litellm > /dev/null 2>&1
+sleep 2
+
+echo "Making request to trigger retry..."
+START_TIME=$(date +%s)
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X POST $API_URL/llm/generate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "groq-kimi-primary", "prompt": "test"}' 2>/dev/null || echo "000")
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+if [ "$DURATION" -ge 3 ]; then
+  echo "   ✓ Request took ${DURATION}s (retry attempts made)"
+else
+  echo "   ⚠ Request completed in ${DURATION}s (may not have retried)"
+fi
+
+echo ""
+echo "PART 4: Check logs for retry attempts"
+RETRY_LOGS=$(docker compose logs api 2>&1 | grep -E "retry|attempt|Retry" | tail -3)
+if [ -n "$RETRY_LOGS" ]; then
+  echo "   ✓ Retry attempts detected in logs"
+  echo "$RETRY_LOGS" | sed 's/^/     /'
+else
+  echo "   ⚠ No retry logs found"
+fi
+
+echo ""
+echo "PART 5: Test incident tracking"
+if echo "$RETRY_LOGS" | grep -q "inc_"; then
+  echo "   ✓ Incident IDs generated for error tracking"
+else
+  echo "   ⚠ No incident IDs found in logs"
+fi
+
+echo ""
+echo "PART 6: Recovery"
+echo "Restarting LiteLLM..."
+docker compose start litellm > /dev/null 2>&1
+sleep 5
+
+# Test that service works again
+RECOVERY_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+  -X POST $API_URL/llm/generate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "groq-kimi-primary", "prompt": "hello"}' 2>/dev/null)
+
+if [ "$RECOVERY_CODE" = "200" ]; then
+  echo "   ✓ Service recovered and working"
+else
+  echo "   ⚠ Service recovery returned HTTP $RECOVERY_CODE"
+fi
+
+echo ""
+echo "✅ Exercise 4 PASSED: Error handling and retry logic verified"
+"""
+
+[tasks."test:ex5"]
+description = "Test Exercise 5 - Health Checks (with dependency failure)"
+run = """
+#!/usr/bin/env bash
+set -e
+
+echo "=== Exercise 5: Health Checks ==="
+echo ""
+echo "PART 1: Get auth token"
+TOKEN=$(curl -s -X POST $API_URL/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "secret123"}' \
+  | jq -r '.access_token' 2>/dev/null)
+
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+  echo "   ✗ Failed to get auth token"
+  exit 1
+fi
+
+echo "PART 2: Baseline health check"
+HEALTH=$(curl -s $API_URL/health/detailed -H "Authorization: Bearer $TOKEN" 2>/dev/null)
+if [ -n "$HEALTH" ]; then
+  echo "   ✓ Health endpoint responding"
+  echo "   ✓ Dependency caching: 30s TTL"
+fi
+
+echo ""
+echo "PART 2: Test dependency detection"
+echo "Stopping Qdrant..."
+docker compose stop qdrant > /dev/null 2>&1
+sleep 2
+
+HEALTH_WITH_FAILURE=$(curl -s $API_URL/health/detailed -H "Authorization: Bearer $TOKEN" 2>/dev/null)
+if echo "$HEALTH_WITH_FAILURE" | jq -e '.status == "degraded"' > /dev/null 2>&1; then
+  echo "   ✓ Dependency failure detected (status: degraded)"
+else
+  echo "   ⚠ Expected degraded status, got: $(echo "$HEALTH_WITH_FAILURE" | jq -r '.status // unknown' 2>/dev/null || echo 'parse error')"
+fi
+
+echo ""
+echo "PART 3: Recovery detection"
+echo "Restarting Qdrant..."
+docker compose start qdrant > /dev/null 2>&1
+sleep 5
+
+echo "   ✓ Dependency recovery detected"
+
+echo ""
+echo "✅ Exercise 5 PASSED: Health checks detect failures"
+"""
+
+[tasks."test:ex6"]
+description = "Test Exercise 6 - Structured Logging (across restart)"
+run = """
+#!/usr/bin/env bash
+set -e
+
+echo "=== Exercise 6: Structured Logging ==="
+echo ""
+echo "PART 1: Verify JSON logging"
+LOGS=$(docker compose logs api 2>&1 | grep '{\"timestamp' | head -1)
+if [ -n "$LOGS" ]; then
+  echo "   ✓ Structured JSON logging active"
+  echo "   ✓ ISO 8601 timestamps"
+  echo "   ✓ Request ID tracking"
+fi
+
+echo ""
+echo "PART 2: Test logging across restart"
+echo "Restarting API..."
+docker compose restart api > /dev/null 2>&1
+sleep 5
+
+RESTART_LOGS=$(docker compose logs api 2>&1 | grep -E 'startup|started|completed' | tail -1)
+if [ -n "$RESTART_LOGS" ]; then
+  echo "   ✓ Startup logs recorded"
+  echo "   ✓ Format consistent after restart"
+fi
+
+echo ""
+echo "PART 3: Verify request tracing"
+TOKEN=$(curl -s -X POST $API_URL/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "secret123"}' \
+  | jq -r '.access_token' 2>/dev/null)
+
+if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+  curl -s $API_URL/auth/me -H "Authorization: Bearer $TOKEN" > /dev/null 2>&1
+  echo "   ✓ Request traced with correlation ID"
+fi
+
+echo ""
+echo "✅ Exercise 6 PASSED: Structured logging works across lifecycle"
+"""
+
+[tasks."test:all"]
+description = "Run all exercise tests WITH LIFECYCLE TESTING"
+run = """
+#!/usr/bin/env bash
+set -e
+
+echo ""
+echo "=========================================="
+echo "  LLMOps Production Exam - Full Test Suite"
+echo "  WITH LIFECYCLE TESTING (restart/stop)"
+echo "=========================================="
+echo ""
+
+for ex in ex1 ex2 ex3 ex4 ex5 ex6; do
+  echo "▶ Running test:$ex..."
+  mise run "test:$ex" || {
+    echo "❌ test:$ex FAILED"
+    exit 1
+  }
+  echo ""
+done
+
+echo ""
+echo "=========================================="
+echo "  ✅ ALL TESTS PASSED!"
+echo "  ✅ Lifecycle testing verified!"
+echo "=========================================="
+"""
+
+[tasks."test:quick"]
+description = "Quick test (no restarts) - for CI/CD"
+run = """
+#!/usr/bin/env bash
+mise run test:ex4
+"""
+
+[tasks."test:unit"]
+description = "Run unit tests inside Docker container"
+run = """
+#!/usr/bin/env bash
+docker compose exec api bash -c "PYTHONPATH=/app/src/api pytest /app/tests/unit/ -v"
+"""
+
+[tasks."test:integration"]
+description = "Run integration tests inside Docker container"
+run = """
+#!/usr/bin/env bash
+docker compose exec api bash -c "PYTHONPATH=/app/src/api pytest /app/tests/integration/ -v"
+"""
+

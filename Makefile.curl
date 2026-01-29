@@ -1,0 +1,174 @@
+# =============================================================================
+# API Test Suite (Exact & Semantic Cache)
+# =============================================================================
+
+# Get JWT token (valid for 1 hour)
+TOKEN := $(shell curl -s -X POST http://localhost:8000/auth/login \
+	-H "Content-Type: application/json" \
+	-d '{"username": "admin", "password": "secret123"}' \
+	| jq -r '.access_token')
+
+# Separator for clarity
+SEPARATOR = "=================================================================="
+
+# Default command
+all: help
+
+# =============================================================================
+# EXACT CACHE DEMO
+# =============================================================================
+
+test-exact-cache:
+	@echo "🚀 Running Exact Cache Test..."
+	@echo $(SEPARATOR)
+	@echo "🔍 Test 1: First call (no cache)"
+	@curl -s -X POST http://localhost:8000/llm/generate \
+		-H "Content-Type: application/json" \
+		-H "Authorization: Bearer $(TOKEN)" \
+		-d '{"model": "groq-kimi-primary", "prompt": "Why the sky is blue?", "max_tokens": 10}' \
+		| jq -C '.'
+	@echo ""
+	@echo "🎯 Test 2: Second call (exact cache hit expected)"
+	@sleep 2 # Allow time for cache to write
+	@curl -s -X POST http://localhost:8000/llm/generate \
+		-H "Content-Type: application/json" \
+		-H "Authorization: Bearer $(TOKEN)" \
+		-d '{"model": "groq-kimi-primary", "prompt": "Why the sky is blue?", "max_tokens": 10}' \
+		| jq -C '.'
+	@echo $(SEPARATOR)
+
+# =============================================================================
+# SEMANTIC CACHE DEMO
+# =============================================================================
+
+test-semantic-cache:
+	@echo "🚀 Running Semantic Cache Test..."
+	@echo $(SEPARATOR)
+	@echo "🔍 Test 1: First call (no cache)"
+	@curl -s -X POST http://localhost:8000/llm/generate \
+		-H "Content-Type: application/json" \
+		-H "Authorization: Bearer $(TOKEN)" \
+		-d '{"model": "groq-kimi-primary", "prompt": "Explain the importance of data encryption at rest.", "max_tokens": 80}' \
+		| jq -C '.'
+	@echo ""
+	@echo "🎯 Test 2: Semantically similar call (semantic cache hit expected)"
+	@sleep 3 # Allow time for cache to write
+	@curl -s -X POST http://localhost:8000/llm/generate \
+		-H "Content-Type: application/json" \
+		-H "Authorization: Bearer $(TOKEN)" \
+		-d '{"model": "groq-kimi-primary", "prompt": "Why is it crucial to encrypt stored data?", "max_tokens": 80}' \
+		| jq -C '.'
+	@echo $(SEPARATOR)
+
+# =============================================================================
+# ADVANCED TESTS
+# =============================================================================
+
+test-cache-performance:
+	@echo "🚀 Running cache performance benchmark..."
+	@./tests/test-cache-performance.sh
+
+test-cache-with-logs:
+	@echo "🔍 Running cache test with log verification..."
+	@./tests/test-cache-with-logs.sh
+
+test-comprehensive:
+	@echo "🎯 Running comprehensive system test..."
+	@./tests/test-comprehensive.sh
+
+test-semantic-detailed:
+	@echo "🧠 Running detailed semantic cache test..."
+	@./tests/test-semantic-cache.sh
+
+# =============================================================================
+# CACHE MANAGEMENT
+# =============================================================================
+
+clear-cache:
+	@echo "🧹 Clearing all caches..."
+	@TOKEN=$(shell curl -s -X POST http://localhost:8000/auth/login \
+		-H "Content-Type: application/json" \
+		-d '{"username": "admin", "password": "secret123"}' \
+		| jq -r '.access_token'); \
+	curl -s -X DELETE "http://localhost:8000/llm/cache/clear" \
+		-H "Authorization: Bearer $$TOKEN" | jq '.'
+
+cache-stats:
+	@echo "📊 Cache statistics..."
+	@TOKEN=$(shell curl -s -X POST http://localhost:8000/auth/login \
+		-H "Content-Type: application/json" \
+		-d '{"username": "admin", "password": "secret123"}' \
+		| jq -r '.access_token'); \
+	curl -s -X GET "http://localhost:8000/llm/cache/stats" \
+		-H "Authorization: Bearer $$TOKEN" | jq '.'
+
+# =============================================================================
+# INFRASTRUCTURE CHECKS
+# =============================================================================
+
+check-qdrant:
+	@echo "🔍 Checking Qdrant status..."
+	@echo "API Health:"
+	@curl -s "http://localhost:6333/health" | jq '.'
+	@echo "Collections:"
+	@curl -s "http://localhost:6333/collections" | jq '.result.collections[].name'
+
+check-mlflow:
+	@echo "📊 Checking MLflow traces..."
+	@curl -s "http://localhost:5001/api/2.0/mlflow/traces?experiment_ids=1" \
+		| jq '.traces | length' | xargs echo "Number of traces:"
+
+check-tei:
+	@echo "🔤 Checking TEI embeddings service..."
+	@curl -s "http://localhost:8080/health" | jq '.'
+
+check-litellm:
+	@echo "🤖 Checking LiteLLM proxy..."
+	@curl -s "http://localhost:8001/health" | jq '.'
+
+status:
+	@echo "🏥 System Status Check"
+	@echo "======================"
+	@$(MAKE) -f Makefile.curl check-qdrant
+	@echo ""
+	@$(MAKE) -f Makefile.curl check-mlflow
+	@echo ""
+	@$(MAKE) -f Makefile.curl check-tei
+	@echo ""
+	@$(MAKE) -f Makefile.curl check-litellm
+
+# =============================================================================
+# HELP
+# =============================================================================
+
+help:
+	@echo "🎯 API Test Suite Commands"
+	@echo "=========================="
+	@echo ""
+	@echo "Core Cache Tests:"
+	@echo "  test-exact-cache      - Demonstrate exact cache (API-level)"
+	@echo "  test-semantic-cache   - Demonstrate semantic cache (Qdrant + TEI)"
+	@echo ""
+	@echo "Advanced Tests:"
+	@echo "  test-cache-performance - Benchmark cache performance"
+	@echo "  test-cache-with-logs  - Cache test with log verification"
+	@echo "  test-comprehensive    - Complete system functionality test"
+	@echo "  test-semantic-detailed - Detailed semantic cache analysis"
+	@echo ""
+	@echo "Cache Management:"
+	@echo "  clear-cache          - Clear all cache collections"
+	@echo "  cache-stats          - Show cache statistics"
+	@echo ""
+	@echo "Infrastructure:"
+	@echo "  status               - Check all services health"
+	@echo "  check-qdrant         - Check Qdrant vector database"
+	@echo "  check-mlflow         - Check MLflow tracing"
+	@echo "  check-tei            - Check TEI embeddings service"
+	@echo "  check-litellm        - Check LiteLLM proxy"
+	@echo ""
+	@echo "🔗 Web Interfaces:"
+	@echo "  • API Docs:      http://localhost:8000/docs"
+	@echo "  • MLflow UI:     http://localhost:5001"
+	@echo "  • Qdrant Dashboard: http://localhost:6333/dashboard"
+	@echo "  • LiteLLM UI:    http://localhost:8001"
+	@echo "  • TEI Embeddings: http://localhost:8080"
