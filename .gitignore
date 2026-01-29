@@ -252,3 +252,6 @@ docs/_build/
 # System Files
 .DS_Store
 Thumbs.db
+
+# GitHub Actions workflows (only for main repo, not mirror)
+.github/workflows/
