@@ -14,12 +14,18 @@ if [[ "$remote_name" != "origin" ]]; then
 fi
 
 should_sync=0
-while read -r local_ref _local_sha remote_ref _remote_sha; do
-  if [[ "$local_ref" == "refs/heads/student" && "$remote_ref" == "refs/heads/student" ]]; then
-    should_sync=1
-    break
-  fi
-done
+
+current_branch="$(git branch --show-current)"
+if [[ "$current_branch" == "student" ]]; then
+  should_sync=1
+else
+  while read -r local_ref _local_sha remote_ref _remote_sha; do
+    if [[ "$local_ref" == "refs/heads/student" && "$remote_ref" == "refs/heads/student" ]]; then
+      should_sync=1
+      break
+    fi
+  done
+fi
 
 if [[ "$should_sync" != "1" ]]; then
   exit 0
