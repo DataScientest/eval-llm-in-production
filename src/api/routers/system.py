@@ -12,13 +12,16 @@ Students should:
 - Return 503 if any dependency is unhealthy
 """
 
+import logging
 from datetime import datetime
 
 from config.settings import SecurityConfig, settings
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
+import httpx
 from services.security_service import security_metrics
 
 router = APIRouter(prefix="/system", tags=["system"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health")

@@ -1,4 +1,4 @@
-FROM ghcr.io/berriai/litellm:main-v1.75.7
+FROM ghcr.io/berriai/litellm:v1.80.5-stable
 
 # Install MLflow and Qdrant for integration
 RUN pip install mlflow qdrant-client

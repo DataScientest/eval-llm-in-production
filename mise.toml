@@ -68,7 +68,7 @@ set -e
 echo "=== Exercise 1: Secure Configuration ==="
 echo ""
 echo "PART 1: Verify environment validation on startup"
-if curl -s $API_URL/health | jq -e '.status == "alive"' > /dev/null 2>&1; then
+if curl -s $API_URL/health | jq -e '.status == "alive" or .status == "healthy"' > /dev/null 2>&1; then
   echo "   ✓ API started successfully"
   echo "   ✓ JWT_SECRET_KEY validated at startup"
 else
@@ -80,9 +80,14 @@ echo ""
 echo "PART 2: Test restart - verify validation happens again"
 echo "Stopping and restarting API..."
 docker compose restart api > /dev/null 2>&1
-sleep 5
+for attempt in {1..15}; do
+  if curl -s $API_URL/health | jq -e '.status == "alive" or .status == "healthy"' > /dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
 
-if curl -s $API_URL/health | jq -e '.status == "alive"' > /dev/null 2>&1; then
+if curl -s $API_URL/health | jq -e '.status == "alive" or .status == "healthy"' > /dev/null 2>&1; then
   echo "   ✓ API restarted successfully"
   echo "   ✓ Environment validation passed on restart"
 else
@@ -120,7 +125,12 @@ echo ""
 echo "PART 1: Test actual graceful shutdown"
 echo "Starting API for shutdown test..."
 docker compose up -d api > /dev/null 2>&1
-sleep 3
+for attempt in {1..15}; do
+  if curl -s $API_URL/health | jq -e '.status == "alive" or .status == "healthy"' > /dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
 
 echo "Stopping API gracefully..."
 START=$(date +%s)
@@ -134,9 +144,14 @@ echo ""
 echo "PART 2: Verify clean restart after shutdown"
 echo "Restarting API..."
 docker compose start api > /dev/null 2>&1
-sleep 5
+for attempt in {1..15}; do
+  if curl -s $API_URL/health | jq -e '.status == "alive" or .status == "healthy"' > /dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
 
-if curl -s $API_URL/health | jq -e '.status == "alive"' > /dev/null 2>&1; then
+if curl -s $API_URL/health | jq -e '.status == "alive" or .status == "healthy"' > /dev/null 2>&1; then
   echo "   ✓ API restarted cleanly"
   echo "   ✓ No resource leaks detected"
   echo "   ✓ Graceful shutdown preserved state"
@@ -158,10 +173,17 @@ set -e
 echo "=== Exercise 3: Request Timeouts & Circuit Breaker ==="
 echo ""
 echo "PART 1: Get auth token"
-TOKEN=$(curl -s -X POST $API_URL/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "secret123"}' \
-  | jq -r '.access_token' 2>/dev/null)
+TOKEN=""
+for attempt in 1 2 3 4 5; do
+  TOKEN=$(curl -s -X POST $API_URL/auth/login \
+    -H "Content-Type: application/json" \
+    -d '{"username": "admin", "password": "secret123"}' \
+    | jq -r '.access_token' 2>/dev/null)
+  if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+    break
+  fi
+  sleep 2
+done
 
 if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
   echo "   ✗ Failed to get auth token"
@@ -207,13 +229,22 @@ echo ""
 echo "PART 5: Recovery"
 echo "Restarting LiteLLM..."
 docker compose start litellm > /dev/null 2>&1
-sleep 5
+for attempt in {1..15}; do
+  if curl -s $LITELLM_URL/health > /dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
 
 if docker compose ps | grep -q "litellm.*Up"; then
   echo "   ✓ Service recovered"
-  # Wait for circuit breaker to start recovering
-  sleep 10
-  RECOVERY_HEALTH=$(curl -s $API_URL/health/detailed -H "Authorization: Bearer $TOKEN" 2>/dev/null | jq -r '.checks.litellm.healthy // false')
+  for attempt in {1..15}; do
+    RECOVERY_HEALTH=$(curl -s $API_URL/health/detailed -H "Authorization: Bearer $TOKEN" 2>/dev/null | jq -r '.checks.litellm.healthy // false')
+    if [ "$RECOVERY_HEALTH" = "true" ]; then
+      break
+    fi
+    sleep 2
+  done
   if [ "$RECOVERY_HEALTH" = "true" ]; then
     echo "   ✓ Circuit breaker: HALF_OPEN → CLOSED"
   else
@@ -234,10 +265,17 @@ set -e
 echo "=== Exercise 4: Error Handling & Retry Logic ==="
 echo ""
 echo "PART 1: Get auth token"
-TOKEN=$(curl -s -X POST $API_URL/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "secret123"}' \
-  | jq -r '.access_token' 2>/dev/null)
+TOKEN=""
+for attempt in 1 2 3 4 5; do
+  TOKEN=$(curl -s -X POST $API_URL/auth/login \
+    -H "Content-Type: application/json" \
+    -d '{"username": "admin", "password": "secret123"}' \
+    | jq -r '.access_token' 2>/dev/null)
+  if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+    break
+  fi
+  sleep 2
+done
 
 if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
   echo "   ✗ Failed to get auth token"
@@ -301,7 +339,12 @@ echo ""
 echo "PART 6: Recovery"
 echo "Restarting LiteLLM..."
 docker compose start litellm > /dev/null 2>&1
-sleep 5
+for attempt in {1..15}; do
+  if curl -s $LITELLM_URL/health > /dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
 
 # Test that service works again
 RECOVERY_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
@@ -329,10 +372,17 @@ set -e
 echo "=== Exercise 5: Health Checks ==="
 echo ""
 echo "PART 1: Get auth token"
-TOKEN=$(curl -s -X POST $API_URL/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "secret123"}' \
-  | jq -r '.access_token' 2>/dev/null)
+TOKEN=""
+for attempt in 1 2 3 4 5; do
+  TOKEN=$(curl -s -X POST $API_URL/auth/login \
+    -H "Content-Type: application/json" \
+    -d '{"username": "admin", "password": "secret123"}' \
+    | jq -r '.access_token' 2>/dev/null)
+  if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+    break
+  fi
+  sleep 2
+done
 
 if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
   echo "   ✗ Failed to get auth token"
@@ -363,7 +413,12 @@ echo ""
 echo "PART 3: Recovery detection"
 echo "Restarting Qdrant..."
 docker compose start qdrant > /dev/null 2>&1
-sleep 5
+for attempt in {1..15}; do
+  if curl -s $QDRANT_URL/collections > /dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
 
 echo "   ✓ Dependency recovery detected"
 
@@ -391,7 +446,12 @@ echo ""
 echo "PART 2: Test logging across restart"
 echo "Restarting API..."
 docker compose restart api > /dev/null 2>&1
-sleep 5
+for attempt in {1..15}; do
+  if curl -s $API_URL/health | jq -e '.status == "alive" or .status == "healthy"' > /dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
 
 RESTART_LOGS=$(docker compose logs api 2>&1 | grep -E 'startup|started|completed' | tail -1)
 if [ -n "$RESTART_LOGS" ]; then
@@ -401,10 +461,17 @@ fi
 
 echo ""
 echo "PART 3: Verify request tracing"
-TOKEN=$(curl -s -X POST $API_URL/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "secret123"}' \
-  | jq -r '.access_token' 2>/dev/null)
+TOKEN=""
+for attempt in 1 2 3 4 5; do
+  TOKEN=$(curl -s -X POST $API_URL/auth/login \
+    -H "Content-Type: application/json" \
+    -d '{"username": "admin", "password": "secret123"}' \
+    | jq -r '.access_token' 2>/dev/null)
+  if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+    break
+  fi
+  sleep 2
+done
 
 if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
   curl -s $API_URL/auth/me -H "Authorization: Bearer $TOKEN" > /dev/null 2>&1
@@ -464,4 +531,3 @@ run = """
 #!/usr/bin/env bash
 docker compose exec api bash -c "PYTHONPATH=/app/src/api pytest /app/tests/integration/ -v"
 """
-
