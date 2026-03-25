@@ -409,7 +409,7 @@ run = """
 set -e
 
 fetch_health() {
-  curl -fsS "$API_URL/health/detailed" -H "Authorization: Bearer $TOKEN" 2>/dev/null
+  curl -s "$API_URL/health/detailed" -H "Authorization: Bearer $TOKEN" 2>/dev/null
 }
 
 cleanup_ex5() {
@@ -479,7 +479,17 @@ for attempt in {1..15}; do
   sleep 2
 done
 
-RECOVERY_HEALTH=$(fetch_health)
+echo "   Waiting for health cache TTL to expire..."
+sleep 35
+
+RECOVERY_HEALTH=""
+for attempt in {1..5}; do
+  RECOVERY_HEALTH=$(fetch_health)
+  if echo "$RECOVERY_HEALTH" | jq -e '.checks.qdrant.healthy == true' > /dev/null 2>&1; then
+    break
+  fi
+  sleep 5
+done
 if echo "$RECOVERY_HEALTH" | jq -e '.checks.qdrant.healthy == true' > /dev/null 2>&1; then
   echo "   ✓ Dependency recovery detected"
 else
@@ -506,7 +516,7 @@ api_is_healthy() {
 echo "=== Exercise 6: Structured Logging ==="
 echo ""
 echo "PART 1: Verify JSON logging"
-LOG_LINE=$(docker compose logs api 2>&1 | grep -E '^\{' | head -1)
+LOG_LINE=$(docker compose logs api 2>&1 | grep '^[{]' | head -1)
 if [ -n "$LOG_LINE" ] && echo "$LOG_LINE" | jq -e '.timestamp' > /dev/null 2>&1; then
   echo "   ✓ Structured JSON logging active"
   if echo "$LOG_LINE" | jq -e '.timestamp | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T")' > /dev/null 2>&1; then
