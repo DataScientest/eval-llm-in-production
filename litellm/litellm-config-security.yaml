@@ -1,0 +1,77 @@
+# LiteLLM Configuration with Semantic Cache
+# Using a custom OpenAI provider to wrap the Hugging Face embedding model.
+
+model_list:
+  # Primary models with security guardrails
+  - model_name: groq-kimi-primary
+    litellm_params:
+      model: groq/moonshotai/kimi-k2-instruct
+      api_key: os.environ/GROQ_API_KEY
+
+    litellm_settings:
+      callbacks: ["detect_prompt_injection"]
+      
+  # Backup Groq model with standard Groq provider
+  - model_name: groq-llama-backup
+    litellm_params:
+      model: groq/llama3-8b-8192
+      api_key: os.environ/GROQ_API_KEY
+      
+  # Fallback models
+  - model_name: gpt-4o-secondary
+    litellm_params:
+      model: gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+      
+  - model_name: gemini-third
+    litellm_params:
+      model: gemini/gemini-2.0-flash-exp
+      api_key: os.environ/GEMINI_API_KEY
+      
+  - model_name: openrouter-fallback
+    litellm_params:
+      model: openrouter/mistralai/mistral-7b-instruct:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      
+  # Embedding model pour cache sémantique (TEI avec OpenAI provider)
+  - model_name: local-embed-model
+    litellm_params:
+      model: openai/text-embedding-ada-002  # Pour utiliser le format OpenAI pour compatibilité
+      api_key: "dummy-key"  # TEI ne nécessite pas de vraie clé
+      api_base: "http://tei-embeddings:80"
+      cache: true
+
+# Cache sémantique LiteLLM via Qdrant
+litellm_settings:
+  callbacks: ["mlflow", "detect_prompt_injection"]
+  cache: true
+  cache_params:
+    type: "qdrant-semantic"
+    # Configuration Qdrant
+    qdrant_api_base: "http://qdrant:6333"
+    qdrant_api_key: ""
+    qdrant_collection_name: "litellm_semantic_cache"  # Collection séparée pour LiteLLM
+    # Paramètres sémantiques
+    similarity_threshold: 0.7  # Baissé pour plus de sensibilité
+    qdrant_semantic_cache_embedding_model: local-embed-model  # Référence au model_name défini ci-dessus
+    qdrant_quantization_config: "binary"
+    ttl: 1800
+    # Activer le cache pour les embeddings
+    supported_call_types: ["acompletion", "aembedding"]
+
+# Built-in Prompt Injection Detection
+prompt_injection_params:
+  heuristics_check: true
+  similarity_check: true
+  vector_db_check: false
+
+# Router Configuration with Security
+router_settings:
+  fallbacks:
+    - "groq-kimi-primary": ["groq-llama-backup", "gpt-4o-secondary", "gemini-third", "openrouter-fallback"]
+    
+# Callback Settings
+callback_settings:
+  mlflow:
+    experiment_name: "llmops-qdrant-only-cache"
+    tracking_uri: "http://mlflow:5000"
