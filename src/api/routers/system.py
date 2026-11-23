@@ -1,6 +1,6 @@
 """System router.
 
-TODO Exercise 5: Health check doesn't verify dependencies!
+TODO Exercise 6: Health check doesn't verify dependencies!
 - Always returns "healthy" even when Qdrant/LiteLLM/MLflow are down
 - Load balancer keeps sending traffic to broken instance
 - No distinction between liveness and readiness
@@ -29,11 +29,11 @@ async def health_check():
     """
     Health check endpoint.
     
-    TODO Exercise 5: This is a FAKE health check!
+    TODO Exercise 6: This is a FAKE health check!
     It always returns "healthy" without checking any dependencies.
     If Qdrant or LiteLLM is down, this still says healthy!
     """
-    # TODO Exercise 5: Should check dependencies!
+    # TODO Exercise 6: Should check dependencies!
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat() + "Z",

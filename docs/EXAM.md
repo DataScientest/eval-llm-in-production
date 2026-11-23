@@ -1,396 +1,181 @@
-# Examen LLMOps: Production Readiness
+# LLMOps Exam: Production Readiness
 
-## Vue d'Ensemble
+> Version française : [EXAM_fr.md](EXAM_fr.md)
 
-Vous avez devant vous une stack LLMOps complète avec cache, sécurité et monitoring. Cependant, ce code contient **6 mauvaises pratiques critiques** qui le rendent dangereux pour la production.
+## Overview
 
-Votre mission: **identifier et corriger ces 6 problèmes**.
+This repository contains a complete LLMOps stack (FastAPI, LiteLLM, Qdrant cache, MLflow, Prometheus, Grafana). It works, but six bad practices make it unsafe for production. Your job is to fix them.
 
-### Format de l'Examen
-- **Type**: Take-home exam (archive)
+- **Exercises 1 to 3 are required.** They build on notions seen in the courses *Integrating LLM in production* and *ML System Design*.
+- **Exercises 4 to 6 are bonus.** They go beyond the courses. Each one comes with hints.
 
-### Workflow Recommandé
+Each exercise has a check you can run yourself on the running stack:
+
 ```bash
-# 1. Fork/clone ce repository
-$ git clone <votre-fork> llmops-exam-solution
-$ cd llmops-exam-solution
-
-# 2. Créer une branche par exercice (recommandé)
-$ git checkout -b fix/structured-logging
-$ # Implémenter le fix
-$ git commit -m "feat: implement structured logging"
-
-# 3. Merger dans main à la fin
-$ git checkout main
-$ git merge fix/structured-logging
-$ git push origin main
+docker compose up -d --build
+bash scripts/check_exercise.sh 1    # 1 to 6
 ```
 
+`[OK]` lines show what already works, `[FAIL]` lines show what is missing. On the starting code, every check fails.
 
-## Exercice 1: Configuration Sécurisée et Validation d'Environnement (15 pts)
+### Setup
 
-### Scénario
 ```bash
-# Un développeur démarre l'API en production sans changer les secrets
-$ docker compose up -d
-$ cat src/api/config/settings.py
-JWT_SECRET_KEY = "your-secret-key-change-in-production"  # Visible dans le code!
-
-# Un attaquant forge un token admin
-$ curl -H "Authorization: Bearer <forged-token>" http://api/admin/data
+cp .env.example .env
+# Set JWT_SECRET_KEY (openssl rand -hex 32) and GROQ_API_KEY (free key: https://console.groq.com/keys)
+docker compose up -d --build
 ```
 
-### Problèmes à Corriger
-**Fichier**: `src/api/config/settings.py`
+### Recommended workflow
 
-1. `JWT_SECRET_KEY` a une valeur par défaut insécurisée
-2. `CORS_ORIGINS: ["*"]` autorise toutes les origines
-3. Pas de validation des variables d'environnement au démarrage
-
-### À Implémenter
-- [ ] Migrer vers `pydantic.BaseSettings` pour validation des types
-- [ ] Fail-fast si `JWT_SECRET_KEY` est la valeur par défaut
-- [ ] CORS sécurisé avec liste explicite d'origines
-- [ ] Créer `.env.example` avec toutes les variables requises
-- [ ] Créer `src/api/config/env_validator.py` pour validation au startup
-
-### Critères de Vérification
 ```bash
-# Sans JWT_SECRET_KEY correcte, l'API doit refuser de démarrer
-$ unset JWT_SECRET_KEY
-$ docker compose up api
-# Attendu: Error: JWT_SECRET_KEY must be set and different from default
+git checkout -b fix/secure-config     # one branch per exercise
+# implement, then check
+bash scripts/check_exercise.sh 1
+git commit -am "fix: secure configuration"
+git checkout main && git merge fix/secure-config
 ```
 
+---
 
-## Exercice 2: Graceful Shutdown et Resource Cleanup (15 pts)
-
-### Scénario
-```bash
-# Redémarrage de l'API
-$ docker compose restart api
-
-# Logs actuels:
-Starting LLMOps Secure API...
-MLflow experiment setup completed
-Shutting down LLMOps Secure API...  # <- Aucun cleanup!
-
-# Conséquences:
-# - Connexions Qdrant non fermées -> connection leak
-# - Traces MLflow incomplètes
-# - Requêtes en cours interrompues brutalement
-```
-
-### Problème à Corriger
-**Fichier**: `src/api/config/lifespan.py`
-
-```python
-# Actuellement:
-yield
-print("Shutting down LLMOps Secure API...")  # Ne fait RIEN!
-```
-
-### À Implémenter
-- [ ] Cleanup des connexions dans lifespan (Qdrant, HTTP clients)
-- [ ] Middleware pour tracker les requêtes en cours (in-flight)
-- [ ] Attendre la fin des requêtes avant shutdown (avec timeout 30s)
-- [ ] Finaliser les runs MLflow actifs
-- [ ] Flush du cache avant fermeture
-
-### Critères de Vérification
-```bash
-# Pendant une requête longue
-$ curl -X POST http://localhost:8000/llm/generate -d '{...}' &
-$ docker compose stop api
-
-# Logs attendus:
-Received shutdown signal
-Waiting for 1 in-flight request(s)...
-Request completed
-Closing Qdrant connections...
-Graceful shutdown completed in 2.3s
-```
-
-
-## Exercice 3: Request Timeouts et Resource Limits (15 pts)
-
-### Scénario
-```bash
-# LiteLLM est lent ou down
-$ docker compose stop litellm
-$ curl -X POST http://localhost:8000/llm/generate -d '{...}'
-
-# Actuellement: L'API attend INDÉFINIMENT
-# Tous les workers bloqués -> API inaccessible
-```
-
-### Problème à Corriger
-**Fichier**: `src/api/routers/llm.py:26`
-
-```python
-# Actuellement: Aucun timeout!
-client = openai.OpenAI(
-    base_url=f"{settings.LITELLM_URL}/v1",
-    api_key="dummy-key"
-)
-```
-
-### À Implémenter
-- [ ] Timeout sur le client OpenAI (30s request, 5s connect)
-- [ ] Limite de taille du body (1MB max)
-- [ ] Circuit breaker pour LiteLLM (ouvrir après 5 échecs)
-- [ ] Middleware `request_limits.py` pour les limites
-
-### Critères de Vérification
-```bash
-# Timeout après 30s max
-$ docker compose stop litellm
-$ time curl -X POST http://localhost:8000/llm/generate -d '{...}'
-# Attendu: 504 Gateway Timeout après ~30s
-
-# Body trop grand rejeté
-$ dd if=/dev/zero bs=1M count=10 | curl -X POST ... --data-binary @-
-# Attendu: 413 Payload Too Large
-```
-
-
-## Exercice 4: Error Handling et Retry Logic (20 pts)
-
-### Scénario
-```bash
-# Erreur réseau transitoire
-$ curl -X POST http://localhost:8000/llm/generate -d '{...}'
-
-# Logs actuels:
-Error generating response: Connection reset by peer
-# -> Erreur retournée immédiatement au lieu de retry
-
-# Response:
-{"detail": "Failed to generate response"}  # Aucun contexte!
-```
-
-### Problèmes à Corriger
-**Fichier**: `src/api/routers/llm.py:175-180`
-
-```python
-# Actuellement: Exception générique
-except Exception as e:
-    print(f"Error generating response: {e}")
-    raise HTTPException(status_code=500, detail="Failed to generate response")
-```
-
-**Fichier**: `src/api/routers/llm.py:167-169`
-```python
-# Échec silencieux de MLflow
-except Exception as e:
-    print(f"Warning: Could not trace LLM request: {e}")
-    # Continue sans tracer -> perte de données!
-```
-
-### À Implémenter
-- [ ] Error handling granulaire par type d'erreur
-- [ ] Retry avec exponential backoff (1s, 2s, 4s - max 3 retries)
-- [ ] Créer `src/api/utils/retry.py` avec décorateur retry
-- [ ] Fallback local si MLflow échoue (log dans fichier)
-- [ ] Messages d'erreur avec contexte (incident_id, timestamp)
-
-### Critères de Vérification
-```bash
-# Retry automatique sur erreur transitoire
-$ curl -X POST http://localhost:8000/llm/generate -d '{...}'
-
-# Logs:
-Attempt 1: Connection error
-Retrying in 1.2s...
-Attempt 2: Success
-
-# Réponse avec contexte en cas d'erreur
-{
-  "error": "BadRequestError",
-  "message": "Model 'invalid' not found",
-  "incident_id": "inc_abc123",
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-```
-
-
-## Exercice 5: Health Checks Complets (15 pts)
-
-### Scénario
-```bash
-# Qdrant est down mais l'API dit "healthy"
-$ docker compose stop qdrant
-$ curl http://localhost:8000/system/health
-{"status": "healthy"}  # FAUX!
-
-# Le load balancer continue d'envoyer du trafic
-# -> 100% des requêtes échouent
-```
-
-### Problème à Corriger
-**Fichier**: `src/api/routers/system.py:20-22`
-
-```python
-# Actuellement: Fake health check!
-@router.get("/health")
-async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now()}
-    # Ne vérifie RIEN!
-```
-
-### À Implémenter
-- [ ] Endpoint `/health` (liveness) - vérifie que l'app répond
-- [ ] Endpoint `/health/detailed` (readiness) - vérifie les dépendances:
-  - Qdrant connectivité
-  - LiteLLM accessible
-  - MLflow accessible
-- [ ] Cache des résultats (30s TTL)
-- [ ] Créer `src/api/services/health_checker.py`
-- [ ] Mettre à jour `docker-compose.yml` healthcheck
-
-### Critères de Vérification
-```bash
-# Basic health toujours OK
-$ docker compose stop qdrant
-$ curl http://localhost:8000/health
-{"status": "alive"}  # 200 OK
-
-# Detailed health détecte le problème
-$ curl http://localhost:8000/health/detailed
-# 503 Service Unavailable
-{
-  "status": "degraded",
-  "checks": {
-    "qdrant": false,
-    "litellm": true,
-    "mlflow": true
-  }
-}
-```
-
-
-## Exercice 6: Structured Logging et Observabilité (20 pts)
-
-### Scénario
-```bash
-# Bug en production, tentative de debugging
-$ docker compose logs api | grep error
-Error generating response: Connection refused
-Error generating response: Timeout
-# Quel user? Quel request? Quel timestamp exact? MYSTÈRE!
-
-# Impossible d'analyser avec des outils
-$ docker compose logs api | jq
-parse error: Invalid JSON  # Ce ne sont pas des logs structurés!
-```
-
-### Problème à Corriger
-**Partout dans le code**: `print()` statements
-
-```python
-# Exemples actuels:
-print(f"DEBUG: Making LiteLLM request with model: {request.model}")
-print(f"Warning: Could not trace LLM request: {e}")
-print(f"Error generating response: {e}")
-```
-
-### À Implémenter
-- [ ] Configuration logging JSON dans `src/api/config/logging.py`
-- [ ] Middleware request ID dans `src/api/middleware/request_id.py`
-- [ ] Remplacer TOUS les `print()` par `logger.*()` avec niveaux appropriés
-- [ ] Propager request_id dans tous les logs
-- [ ] Header `X-Request-ID` dans les réponses
-
-### Critères de Vérification
-```bash
-# Logs JSON structurés
-$ docker compose logs api | head -1 | jq
-{
-  "timestamp": "2024-01-15T10:30:00.123Z",
-  "level": "INFO",
-  "message": "llm_request_started",
-  "request_id": "req_abc123",
-  "user": "admin",
-  "model": "groq-primary"
-}
-
-# Corrélation par request_id
-$ curl -D - http://localhost:8000/llm/generate -d '{...}'
-X-Request-ID: req_abc123
-
-$ docker compose logs api | jq 'select(.request_id == "req_abc123")'
-# Tous les logs de cette requête
-```
-
-
-## Barème
-
-| Exercice | Points | Critères |
-|----------|--------|----------|
-| 1. Configuration Sécurisée | 15 | Pydantic settings, fail-fast, CORS |
-| 2. Graceful Shutdown | 15 | Cleanup, in-flight tracking |
-| 3. Request Timeouts | 15 | Timeouts, limits, circuit breaker |
-| 4. Error Handling | 20 | Retry, granular errors, fallbacks |
-| 5. Health Checks | 15 | Liveness/readiness, dependency checks |
-| 6. Structured Logging | 20 | JSON logs, request ID, niveaux |
-| **Total** | **100** | |
-
-
-## Livrables Attendus
-
-### Structure du Repository
-```
-votre-repo/
-├── EXAM.md                           # Ce fichier
-├── IMPLEMENTATION.md                 # Vos notes d'implémentation
-├── .env.example                      # Template configuration (Ex 1)
-├── src/api/
-│   ├── config/
-│   │   ├── settings.py              # Refactoré avec Pydantic (Ex 1)
-│   │   ├── env_validator.py         # Nouveau (Ex 1)
-│   │   ├── logging.py               # Nouveau (Ex 6)
-│   │   └── lifespan.py              # Modifié (Ex 2)
-│   ├── middleware/
-│   │   ├── request_id.py            # Nouveau (Ex 6)
-│   │   ├── request_limits.py        # Nouveau (Ex 3)
-│   │   └── shutdown.py              # Nouveau (Ex 2)
-│   ├── services/
-│   │   ├── health_checker.py        # Nouveau (Ex 5)
-│   │   └── circuit_breaker.py       # Nouveau (Ex 3)
-│   ├── utils/
-│   │   └── retry.py                 # Nouveau (Ex 4)
-│   └── routers/
-│       ├── llm.py                   # Modifié (Ex 3, 4, 6)
-│       └── system.py                # Modifié (Ex 5, 6)
-└── tests/
-    └── test_*.py                    # Tests pour chaque exercice
-```
-
-### Documentation
-Créer un fichier `IMPLEMENTATION.md` avec pour chaque exercice:
-- Problème identifié
-- Solution implémentée
-- Commandes de vérification
-
-
-## Ressources
-
-- FastAPI: https://fastapi.tiangolo.com
-- Pydantic Settings: https://docs.pydantic.dev/latest/concepts/pydantic_settings/
-- Python Logging: https://docs.python.org/3/library/logging.html
-- Tenacity (retry): https://tenacity.readthedocs.io
-
-
-## Checklist Finale
-
-Avant de soumettre, vérifiez:
-
-- [ ] `docker compose up` échoue si `JWT_SECRET_KEY` est la valeur par défaut
-- [ ] Shutdown gracieux complète en < 30s avec cleanup visible dans les logs
-- [ ] Requêtes timeout après 30s maximum
-- [ ] Retry automatique sur erreurs transitoires (visible dans logs)
-- [ ] `/health/detailed` retourne 503 si une dépendance est down
-- [ ] Tous les logs sont en JSON structuré avec request_id
-- [ ] Tous vos tests passent: `pytest tests/ -v`
-
-Bonne chance!
+## Required exercises
+
+### Exercise 1: Secure configuration (30 pts)
+
+**Problem.** `src/api/config/settings.py` ships a default `JWT_SECRET_KEY` (`"your-secret-key-change-in-production"`) and `CORS_ORIGINS = ["*"]`. If someone deploys without changing the secret, anyone can forge an admin token with the value read from the code.
+
+**To do**
+- [ ] Move the settings to `pydantic-settings` (`BaseSettings`), read from the environment.
+- [ ] Refuse to start (fail fast) if `JWT_SECRET_KEY` is missing, equal to the default value, or shorter than 32 characters.
+- [ ] Replace `CORS_ORIGINS = ["*"]` with an explicit list of origins.
+- [ ] Complete `src/api/config/env_validator.py` (starting point provided) and call it at startup.
+- [ ] Keep `.env.example` up to date with every required variable.
+
+**Hints**
+- Course reminders: secrets in environment variables (*ML System Design*, chapter 7); JWT authentication (*Integrating LLM in production*, chapter 3).
+- `pydantic-settings`: a field without default value is required; a `@field_validator` can reject a weak value. Doc: https://docs.pydantic.dev/latest/concepts/pydantic_settings/
+- The check imports `config.settings` with the default secret and expects the import to fail.
+
+**Check:** `bash scripts/check_exercise.sh 1`
+
+### Exercise 2: Error handling and retry (35 pts)
+
+**Problem.** In `src/api/routers/llm.py`, every error ends in `except Exception` with a generic `{"detail": "Failed to generate response"}`. A transient network error is returned at once instead of being retried, and nothing allows support to find the incident in the logs.
+
+**To do**
+- [ ] Handle errors by type: rate limit (429), bad request or unknown model (400/404), connection or timeout (502/504).
+- [ ] Return structured errors: error type, message, `incident_id`, `timestamp`.
+- [ ] Retry transient errors (connection, timeout, rate limit) with exponential backoff: 1 s, 2 s, 4 s, 3 retries max. Complete `src/api/utils/retry.py` (starting point provided).
+- [ ] Log each attempt, for example `Attempt 1/4 failed: APIConnectionError. Retrying in 1.1s`.
+- [ ] If MLflow tracing fails, log the failure instead of silently ignoring it.
+
+**Hints**
+- Course reminders: retry with exponential backoff and circuit breaker (*ML System Design*, chapter 5); fallback between models with LiteLLM (*Integrating LLM in production*, chapter 1).
+- Do not retry a client error (400, 404): it will fail again.
+- Add some random jitter to the delay so that clients do not retry all at once.
+- Library option: `tenacity` (https://tenacity.readthedocs.io). A small hand-written loop is accepted too.
+- Set `max_retries=0` on the OpenAI client so that only your retry logic runs.
+
+**Check:** `bash scripts/check_exercise.sh 2` (the check stops LiteLLM for a few seconds and expects retry attempts in the logs).
+
+### Exercise 3: Structured logging (35 pts)
+
+**Problem.** The code uses `print()` everywhere. When a request fails, nothing tells you which user or which request it was, and the logs cannot be parsed (`docker compose logs api | jq` fails).
+
+**To do**
+- [ ] Configure JSON logging in `src/api/config/logging_config.py` (starting point provided): one JSON object per line with at least `timestamp`, `level`, `message`, `request_id`.
+- [ ] Complete the middleware `src/api/middleware/request_id.py` (starting point provided): generate a request ID, keep it for the whole request, return it in the `X-Request-ID` header.
+- [ ] Replace every `print()` with `logger.debug/info/warning/error()` at the right level.
+- [ ] Add the `request_id` to every log line written during a request.
+
+**Hints**
+- Course reminder: prediction log pattern, one unique ID per request (*ML System Design*, chapter 8).
+- A `logging.Formatter` subclass that returns `json.dumps({...})` is enough. Doc: https://docs.python.org/3/library/logging.html
+- `contextvars.ContextVar` keeps the request ID available in any function called during the request.
+- Uvicorn access logs can stay as they are; your application logs must be JSON.
+
+**Check:** `bash scripts/check_exercise.sh 3`
+
+---
+
+## Bonus exercises
+
+These topics are not covered by the courses. Each one is worth extra points but cannot make you fail the exam.
+
+### Exercise 4 (bonus): Graceful shutdown (+10 pts)
+
+**Problem.** In `src/api/config/lifespan.py`, nothing happens after `yield`: on `docker compose stop api`, in-flight requests are cut, Qdrant connections are not closed and MLflow traces stay incomplete.
+
+**To do**
+- [ ] Track in-flight requests with a middleware (for example `src/api/middleware/shutdown.py`).
+- [ ] On shutdown, wait for them to finish (30 s max), then close Qdrant and HTTP clients and end active MLflow runs.
+- [ ] Log each step: `Waiting for 1 active request(s)...`, `Closing Qdrant connections...`, `Graceful shutdown completed in 2.3s`.
+
+**Hints**
+- FastAPI runs the code after `yield` in the lifespan function when the server stops. Doc: https://fastapi.tiangolo.com/advanced/events/
+- A counter incremented and decremented by a middleware is enough to know how many requests are running.
+
+**Check:** `bash scripts/check_exercise.sh 4`
+
+### Exercise 5 (bonus): Timeouts and request limits (+10 pts)
+
+**Problem.** The OpenAI client in `src/api/routers/llm.py` has no timeout: if LiteLLM hangs, every worker waits forever. The API also accepts request bodies of any size.
+
+**To do**
+- [ ] Set a timeout on the OpenAI client: 30 s for the request, 5 s to connect. Return 504 on timeout.
+- [ ] Reject bodies larger than 1 MB with 413 (middleware `src/api/middleware/request_limits.py`).
+- [ ] Optional: a circuit breaker that stops calling LiteLLM after 5 consecutive failures and returns 503 for a while.
+
+**Hints**
+- `openai.OpenAI(..., timeout=httpx.Timeout(30.0, connect=5.0))`. Doc: https://www.python-httpx.org/advanced/timeouts/
+- A middleware can read the `Content-Length` header and answer 413 before reading the body.
+- Circuit breaker: *ML System Design*, chapter 5.
+
+**Check:** `bash scripts/check_exercise.sh 5`
+
+### Exercise 6 (bonus): Health checks (+10 pts)
+
+**Problem.** `/system/health` always answers `"healthy"`, even when Qdrant or LiteLLM is down. A load balancer would keep sending traffic to a broken instance.
+
+**To do**
+- [ ] `/health` (liveness): answers 200 as long as the application runs.
+- [ ] `/health/detailed` (readiness): checks Qdrant, LiteLLM and MLflow; answers 200 if all are up, 503 with `"status": "degraded"` and the detail per dependency otherwise.
+- [ ] Cache the results for 30 s (for example in `src/api/services/health_checker.py`).
+- [ ] Use `/health` in the `api` healthcheck of `docker-compose.yml`.
+
+**Hints**
+- Liveness answers "is the process alive?", readiness answers "can it serve traffic?". Doc: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+- Health checks are introduced in *Integrating LLM in production*, chapter 6.
+- Check the dependencies in parallel with short timeouts so that `/health/detailed` stays fast.
+
+**Check:** `bash scripts/check_exercise.sh 6` (the check stops Qdrant for about 35 s).
+
+---
+
+## Grading
+
+| Exercise | Points |
+|----------|--------|
+| 1. Secure configuration | 30 |
+| 2. Error handling and retry | 35 |
+| 3. Structured logging | 35 |
+| **Required total** | **100** |
+| 4. Graceful shutdown (bonus) | +10 |
+| 5. Timeouts and limits (bonus) | +10 |
+| 6. Health checks (bonus) | +10 |
+
+- **Validation:** at least 60/100 on exercises 1 to 3.
+- A working but incomplete exercise gets half of its points.
+- Bonus points are added to the final grade (capped at 100). They do not replace the required exercises.
+
+## Deliverables
+
+- Your repository with the fixed code (archive or link, as asked on the platform).
+- An `IMPLEMENTATION.md` file at the root, with for each exercise: the problem, your solution, the command that shows it works.
+
+## Final checklist
+
+- [ ] `bash scripts/check_exercise.sh 1`, `2` and `3` print `PASSED`.
+- [ ] Bonus exercises attempted: their check prints `PASSED`.
+- [ ] `IMPLEMENTATION.md` is written.
+- [ ] `.env` is not committed (it contains your API keys).
