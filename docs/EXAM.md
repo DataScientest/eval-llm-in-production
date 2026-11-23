@@ -311,7 +311,7 @@ $ docker compose logs api | head -1 | jq
   "message": "llm_request_started",
   "request_id": "req_abc123",
   "user": "admin",
-  "model": "groq-kimi-primary"
+  "model": "groq-primary"
 }
 
 # Corrélation par request_id

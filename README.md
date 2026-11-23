@@ -112,7 +112,7 @@ docker compose logs api | grep -i "configuration\|settings"
 curl -X POST http://localhost:8000/llm/generate \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"model": "groq-kimi-primary", "prompt": "Write a long essay"}' &
+  -d '{"model": "groq-primary", "prompt": "Write a long essay"}' &
 
 docker compose stop api
 # Expected: Request completes before shutdown (30s grace period)
@@ -168,7 +168,7 @@ curl -X POST http://localhost:8000/llm/generate \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "X-Request-ID: test-request-123" \
-  -d '{"model": "groq-kimi-primary", "prompt": "Hello"}'
+  -d '{"model": "groq-primary", "prompt": "Hello"}'
 
 docker compose logs api | grep "test-request-123"
 # Expected: All logs for this request share the same request_id

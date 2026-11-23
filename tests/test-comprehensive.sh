@@ -24,7 +24,7 @@ echo "🔍 Test 2: Premier appel API (pas de cache attendu)"
 RESPONSE1=$(curl -s -X POST http://localhost:8000/llm/generate \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $TOKEN" \
-    -d '{"model": "groq-kimi-primary", "prompt": "What are best practices for secure API design?", "max_tokens": 50}')
+    -d '{"model": "groq-primary", "prompt": "What are best practices for secure API design?", "max_tokens": 200}')
 
 echo "Réponse reçue: $(echo $RESPONSE1 | jq -r '.response' | head -c 100)..."
 
@@ -36,7 +36,7 @@ sleep 2  # Petit délai pour s'assurer que le cache est indexé
 RESPONSE2=$(curl -s -X POST http://localhost:8000/llm/generate \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $TOKEN" \
-    -d '{"model": "groq-kimi-primary", "prompt": "What are best practices for secure API design?", "max_tokens": 50}')
+    -d '{"model": "groq-primary", "prompt": "What are best practices for secure API design?", "max_tokens": 200}')
 
 echo "Réponse reçue: $(echo $RESPONSE2 | jq -r '.response' | head -c 100)..."
 
@@ -46,7 +46,7 @@ echo "🔄 Test 4: Variation sémantique"
 RESPONSE3=$(curl -s -X POST http://localhost:8000/llm/generate \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $TOKEN" \
-    -d '{"model": "groq-kimi-primary", "prompt": "Could you share guidelines for creating a secure API?", "max_tokens": 50}')
+    -d '{"model": "groq-primary", "prompt": "Could you share guidelines for creating a secure API?", "max_tokens": 200}')
 
 echo "Réponse reçue: $(echo $RESPONSE3 | jq -r '.response' | head -c 100)..."
 
