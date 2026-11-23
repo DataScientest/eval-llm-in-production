@@ -32,7 +32,7 @@ TIME1=$(curl -s -w "%{time_total}" -o /tmp/response1.json \
     -X POST http://localhost:8000/llm/generate \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $TOKEN" \
-    -d '{"model": "groq-kimi-primary", "prompt": "What is machine learning?", "max_tokens": 50}')
+    -d '{"model": "groq-primary", "prompt": "What is machine learning?", "max_tokens": 200}')
 echo "${TIME1}s"
 
 sleep 2  # Allow cache to write
@@ -43,7 +43,7 @@ TIME2=$(curl -s -w "%{time_total}" -o /tmp/response2.json \
     -X POST http://localhost:8000/llm/generate \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $TOKEN" \
-    -d '{"model": "groq-kimi-primary", "prompt": "What is machine learning?", "max_tokens": 50}')
+    -d '{"model": "groq-primary", "prompt": "What is machine learning?", "max_tokens": 200}')
 echo "${TIME2}s"
 
 # Calculate improvement
@@ -60,7 +60,7 @@ TIME3=$(curl -s -w "%{time_total}" -o /tmp/response3.json \
     -X POST http://localhost:8000/llm/generate \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $TOKEN" \
-    -d '{"model": "groq-kimi-primary", "prompt": "Explain artificial intelligence concepts", "max_tokens": 50}')
+    -d '{"model": "groq-primary", "prompt": "Explain artificial intelligence concepts", "max_tokens": 200}')
 echo "${TIME3}s"
 
 sleep 3  # Allow semantic cache to index
@@ -71,7 +71,7 @@ TIME4=$(curl -s -w "%{time_total}" -o /tmp/response4.json \
     -X POST http://localhost:8000/llm/generate \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $TOKEN" \
-    -d '{"model": "groq-kimi-primary", "prompt": "What are the fundamentals of AI?", "max_tokens": 50}')
+    -d '{"model": "groq-primary", "prompt": "What are the fundamentals of AI?", "max_tokens": 200}')
 echo "${TIME4}s"
 
 # Calculate improvement for semantic

@@ -1,11 +1,11 @@
 """LLM operations router.
 
-TODO Exercise 3: No timeouts configured!
+TODO Exercise 5: No timeouts configured!
 - OpenAI client has no timeout -> can hang forever
 - No circuit breaker -> cascading failures
 - No request body size limits
 
-TODO Exercise 4: Poor error handling!
+TODO Exercise 2: Poor error handling!
 - Generic exception catching
 - No retry logic for transient errors
 - No incident tracking
@@ -36,7 +36,7 @@ from cache.exact_cache import ExactCache
 
 router = APIRouter(prefix="/llm", tags=["llm"])
 
-# TODO Exercise 3: No timeout configured! This can hang forever!
+# TODO Exercise 5: No timeout configured! This can hang forever!
 client = openai.OpenAI(
     base_url=f"{settings.LITELLM_URL}/v1",
     api_key="dummy-key"  # LiteLLM handles the real API keys
@@ -140,7 +140,7 @@ async def generate_secure_prompt(
                 cache_hit=cached_response is not None,
             )
         except Exception as e:
-            # TODO Exercise 4: Silent failure - no fallback logging!
+            # TODO Exercise 2: Silent failure - no fallback logging!
             print(f"Warning: Could not trace LLM request: {e}")
 
         return SecurePromptResponse(

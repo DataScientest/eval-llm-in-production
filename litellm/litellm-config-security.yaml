@@ -3,19 +3,26 @@
 
 model_list:
   # Primary models with security guardrails
-  - model_name: groq-kimi-primary
+  - model_name: groq-primary
     litellm_params:
-      model: groq/moonshotai/kimi-k2-instruct
+      model: groq/openai/gpt-oss-120b
       api_key: os.environ/GROQ_API_KEY
+      # gpt-oss models reason first; reasoning tokens count in max_tokens.
+      reasoning_effort: low
+      # LiteLLM does not list reasoning_effort for groq: allow it explicitly,
+      # otherwise every call fails with UnsupportedParamsError (HTTP 400).
+      allowed_openai_params: ["reasoning_effort"]
 
     litellm_settings:
       callbacks: ["detect_prompt_injection"]
       
   # Backup Groq model with standard Groq provider
-  - model_name: groq-llama-backup
+  - model_name: groq-backup
     litellm_params:
-      model: groq/llama3-8b-8192
+      model: groq/openai/gpt-oss-20b
       api_key: os.environ/GROQ_API_KEY
+      reasoning_effort: low
+      allowed_openai_params: ["reasoning_effort"]
       
   # Fallback models
   - model_name: gpt-4o-secondary
@@ -25,7 +32,7 @@ model_list:
       
   - model_name: gemini-third
     litellm_params:
-      model: gemini/gemini-2.0-flash-exp
+      model: gemini/gemini-2.5-flash
       api_key: os.environ/GEMINI_API_KEY
       
   - model_name: openrouter-fallback
@@ -36,7 +43,7 @@ model_list:
   # Embedding model pour cache sémantique (TEI avec OpenAI provider)
   - model_name: local-embed-model
     litellm_params:
-      model: openai/text-embedding-ada-002  # Pour utiliser le format OpenAI pour compatibilité
+      model: openai/sentence-transformers/all-MiniLM-L6-v2  # OpenAI format, served by TEI
       api_key: "dummy-key"  # TEI ne nécessite pas de vraie clé
       api_base: "http://tei-embeddings:80"
       cache: true
@@ -68,7 +75,7 @@ prompt_injection_params:
 # Router Configuration with Security
 router_settings:
   fallbacks:
-    - "groq-kimi-primary": ["groq-llama-backup", "gpt-4o-secondary", "gemini-third", "openrouter-fallback"]
+    - "groq-primary": ["groq-backup", "gpt-4o-secondary", "gemini-third", "openrouter-fallback"]
     
 # Callback Settings
 callback_settings:

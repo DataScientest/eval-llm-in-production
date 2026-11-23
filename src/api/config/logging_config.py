@@ -1,7 +1,7 @@
 """Basic logging setup for the student branch.
 
 This file exists so the application can start and students can iterate on
-Exercise 6. The implementation is intentionally minimal and not structured.
+Exercise 3. The implementation is intentionally minimal and not structured.
 """
 
 import logging

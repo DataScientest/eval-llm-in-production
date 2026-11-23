@@ -88,7 +88,7 @@ def get_default_model(litellm_url: str) -> str:
         available_models = [model["id"] for model in response.json().get("data", [])]
 
         priority_models = [
-            "groq-kimi-primary",
+            "groq-primary",
             "gpt-4o-secondary",
             "gemini-third",
             "openrouter-fallback",
@@ -101,7 +101,7 @@ def get_default_model(litellm_url: str) -> str:
     except Exception:
         pass
 
-    return "groq-kimi-primary"
+    return "groq-primary"
 
 
 # Simple settings object for compatibility

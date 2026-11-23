@@ -1,6 +1,6 @@
 """Application lifespan management.
 
-TODO Exercise 2: This lifespan has no proper shutdown handling!
+TODO Exercise 4: This lifespan has no proper shutdown handling!
 - No cleanup of Qdrant connections (connection leak)
 - No waiting for in-flight requests
 - No finalization of MLflow runs
@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     """
     Manage application lifecycle.
     
-    TODO Exercise 2: Currently does NO cleanup on shutdown!
+    TODO Exercise 4: Currently does NO cleanup on shutdown!
     """
     # ===== STARTUP =====
     print("Starting LLMOps Secure API...")
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # ===== SHUTDOWN =====
-    # TODO Exercise 2: This does NOTHING!
+    # TODO Exercise 4: This does NOTHING!
     # - No waiting for active requests
     # - No cleanup of connections
     # - No finalization of MLflow runs

@@ -9,16 +9,18 @@ An **LLMOps exam** covering configuration management, graceful shutdown, fault t
 
 ### 6 Exercises
 
-The detailed exam instructions are available in the [EXAM.md](docs/EXAM.md) file.
+Instructions: [docs/EXAM.md](docs/EXAM.md) (English) or [docs/EXAM_fr.md](docs/EXAM_fr.md) (français).
 
-| # | Topic | Key Concepts |
-|---|-------|--------------|
-| 1 | Secure Configuration | Pydantic BaseSettings, environment validation |
-| 2 | Graceful Shutdown | In-flight request tracking, resource cleanup |
-| 3 | Request Timeouts | httpx timeouts, circuit breaker pattern |
-| 4 | Error Handling & Retry | Granular exceptions, exponential backoff |
-| 5 | Health Checks | Liveness vs readiness, dependency verification |
-| 6 | Structured Logging | JSON logging, request ID tracing |
+| # | Topic | Status | Points |
+|---|-------|--------|--------|
+| 1 | Secure configuration | required | 30 |
+| 2 | Error handling and retry | required | 35 |
+| 3 | Structured logging | required | 35 |
+| 4 | Graceful shutdown | bonus | +10 |
+| 5 | Timeouts and request limits | bonus | +10 |
+| 6 | Health checks | bonus | +10 |
+
+Check an exercise on the running stack: `bash scripts/check_exercise.sh <1-6>`.
 
 
 ## Quick Start
@@ -61,31 +63,23 @@ make -f Makefile.curl status   # alternative
 
 ## Testing the Exercises
 
-### Automated Testing with mise
+Each exercise has a check that runs against the stack started with `docker compose up -d`:
 
 ```bash
-# Install mise: https://mise.jdx.dev/getting-started.html
-
-# Run all exercise tests
-mise run test:all
-
-# Run individual exercise tests
-mise run test:ex1    # Secure Configuration
-mise run test:ex2    # Graceful Shutdown
-mise run test:ex3    # Request Timeouts & Circuit Breaker
-mise run test:ex4    # Error Handling & Retry
-mise run test:ex5    # Health Checks
-mise run test:ex6    # Structured Logging
-
-# Other useful commands
-mise run status      # Check all services
-mise run logs        # View API logs
-mise run token       # Get JWT token
+bash scripts/check_exercise.sh 1   # required: 1, 2, 3   bonus: 4, 5, 6
 ```
 
-### Manual Testing
+With [mise](https://mise.jdx.dev/) (optional):
 
-#### Get Authentication Token
+```bash
+mise run test:all    # required exercises 1 to 3
+mise run test:ex4    # one exercise (ex1 to ex6)
+mise run status      # check all services
+mise run logs        # view API logs
+mise run token       # get a JWT token
+```
+
+Get a token for manual calls:
 
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
@@ -94,92 +88,14 @@ TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
   | jq -r '.access_token')
 ```
 
-#### Exercise 1: Secure Configuration
-
-```bash
-# Missing JWT_SECRET_KEY should fail at startup
-unset JWT_SECRET_KEY && docker compose up api
-# Expected: ValidationError with clear message
-
-# Check settings validation
-docker compose logs api | grep -i "configuration\|settings"
-```
-
-### Exercise 2: Graceful Shutdown
-
-```bash
-# Start a long request then send SIGTERM
-curl -X POST http://localhost:8000/llm/generate \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "groq-kimi-primary", "prompt": "Write a long essay"}' &
-
-docker compose stop api
-# Expected: Request completes before shutdown (30s grace period)
-```
-
-### Exercise 3: Request Timeouts & Circuit Breaker
-
-```bash
-# Check circuit breaker status
-curl -s http://localhost:8000/health/detailed \
-  -H "Authorization: Bearer $TOKEN" | jq '.checks.circuit_breaker'
-
-# After multiple failures, circuit opens
-# Expected: 503 Service Unavailable with "Circuit breaker is open"
-```
-
-### Exercise 4: Error Handling & Retry
-
-```bash
-# Test with invalid model (should not retry)
-curl -X POST http://localhost:8000/llm/generate \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "invalid-model", "prompt": "test"}'
-# Expected: 400 Bad Request (no retry)
-
-# Check logs for retry attempts on transient errors
-docker compose logs api | grep -i "retry\|attempt"
-```
-
-### Exercise 5: Health Checks
-
-```bash
-# Liveness probe (simple)
-curl -s http://localhost:8000/health | jq
-# Expected: {"status": "healthy"}
-
-# Readiness probe (detailed)
-curl -s http://localhost:8000/health/detailed \
-  -H "Authorization: Bearer $TOKEN" | jq
-# Expected: All dependencies checked (qdrant, litellm, mlflow)
-```
-
-### Exercise 6: Structured Logging
-
-```bash
-# Check JSON log format
-docker compose logs api --tail=50 | head -20
-# Expected: JSON lines with timestamp, level, request_id, message
-
-# Verify request ID propagation
-curl -X POST http://localhost:8000/llm/generate \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -H "X-Request-ID: test-request-123" \
-  -d '{"model": "groq-kimi-primary", "prompt": "Hello"}'
-
-docker compose logs api | grep "test-request-123"
-# Expected: All logs for this request share the same request_id
-```
+The scenario and the expected behaviour of each exercise are described in [docs/EXAM.md](docs/EXAM.md).
 
 
 ## Project Structure
 
 ```sh
-├── EXAM.md                         # Student instructions
-├── CORRECTION.md                   # Grading guide (main branch only)
+├── docs/EXAM.md, docs/EXAM_fr.md  # Student instructions (EN, FR)
+├── docs/CORRECTION.md              # Grading guide (solution repo only)
 ├── .env.example                    # Environment template
 ├── docker-compose.yml              # Service orchestration
 ├── Makefile.curl                   # Test automation
@@ -189,21 +105,21 @@ docker compose logs api | grep "test-request-123"
 │   ├── config/
 │   │   ├── settings.py             # Ex1: Pydantic BaseSettings
 │   │   ├── env_validator.py        # Ex1: Startup validation
-│   │   ├── lifespan.py             # Ex2: Graceful shutdown
-│   │   ├── logging_config.py       # Ex6: JSON logging
+│   │   ├── lifespan.py             # Ex4: Graceful shutdown
+│   │   ├── logging_config.py       # Ex3: JSON logging
 │   │   └── app.py                  # Health endpoints
 │   ├── middleware/
-│   │   ├── shutdown.py             # Ex2: In-flight tracking
-│   │   ├── request_limits.py       # Ex3: Body size limits
-│   │   └── request_id.py           # Ex6: Request ID generation
+│   │   ├── shutdown.py             # Ex4: In-flight tracking
+│   │   ├── request_limits.py       # Ex5: Body size limits
+│   │   └── request_id.py           # Ex3: Request ID generation
 │   ├── routers/
-│   │   ├── llm.py                  # Ex3/Ex4: Timeouts, retry, errors
-│   │   └── system.py               # Ex5: Health endpoints
+│   │   ├── llm.py                  # Ex5/Ex2: Timeouts, retry, errors
+│   │   └── system.py               # Ex6: Health endpoints
 │   ├── services/
-│   │   ├── circuit_breaker.py      # Ex3: Circuit breaker pattern
-│   │   └── health_checker.py       # Ex5: Dependency verification
+│   │   ├── circuit_breaker.py      # Ex5: Circuit breaker pattern
+│   │   └── health_checker.py       # Ex6: Dependency verification
 │   └── utils/
-│       └── retry.py                # Ex4: Exponential backoff
+│       └── retry.py                # Ex2: Exponential backoff
 │
 ├── litellm/                        # LiteLLM configuration
 └── tests/                          # Test suite
@@ -222,7 +138,7 @@ docker compose logs api | grep "test-request-123"
 │  Middleware Stack                                               │
 │  ┌───────────────┐  ┌───────────────┐  ┌───────────────────┐   │
 │  │ Request ID    │→ │ Shutdown      │→ │ Request Limits    │   │
-│  │ (Ex6)         │  │ Check (Ex2)   │  │ (Ex3: 1MB max)    │   │
+│  │ (Ex3)         │  │ Check (Ex4)   │  │ (Ex5: 1MB max)    │   │
 │  └───────────────┘  └───────────────┘  └───────────────────┘   │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
@@ -230,19 +146,19 @@ docker compose logs api | grep "test-request-123"
 ┌─────────────────────────────────────────────────────────────────┐
 │  FastAPI Application                                            │
 │  ┌───────────────────────────────────────────────────────────┐  │
-│  │ Settings (Ex1)     │ Health Checks (Ex5)                  │  │
+│  │ Settings (Ex1)     │ Health Checks (Ex6)                  │  │
 │  │ - Pydantic config  │ - /health (liveness)                 │  │
 │  │ - JWT validation   │ - /health/detailed (readiness)       │  │
 │  └───────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────┐  │
-│  │ LLM Router (Ex3, Ex4)                                     │  │
+│  │ LLM Router (Ex5, Ex2)                                     │  │
 │  │ - Timeouts (30s request, 5s connect)                      │  │
 │  │ - Circuit Breaker (5 failures → open)                     │  │
 │  │ - Retry with exponential backoff                          │  │
 │  │ - Granular error handling                                 │  │
 │  └───────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────┐  │
-│  │ Structured Logging (Ex6)                                  │  │
+│  │ Structured Logging (Ex3)                                  │  │
 │  │ - JSON format with timestamp, level, request_id          │  │
 │  │ - Contextual logging throughout request lifecycle         │  │
 │  └───────────────────────────────────────────────────────────┘  │
@@ -279,26 +195,4 @@ docker compose down -v
 
 ## Grading
 
-### Validation Thresholds
-- **Minimum 60 points (60%)** to pass
-- **80 points (80%)** for distinction
-- **90 points (90%)** for excellence
-
-### Validation Rules
-- **Core exercises required**: At least 2 of [Ex1, Ex2, Ex6] must be complete
-- **Partial credit**: 50% points for functional but incomplete implementations
-- **Bonus**: +5 points for comprehensive documentation
-
-### Automated Validation
-```bash
-# 80% threshold = 4.8/6 exercises must pass
-mise run test:all && echo "✅ Validation candidate"
-```
-
-**Total: 100 points**
-- Exercise 1: 15 pts (Core - Security)
-- Exercise 2: 15 pts (Core - Stability)  
-- Exercise 3: 20 pts (Resilience)
-- Exercise 4: 15 pts (Robustness)
-- Exercise 5: 15 pts (Monitoring)
-- Exercise 6: 20 pts (Core - Observability)
+See the grading section of [docs/EXAM.md](docs/EXAM.md): exercises 1 to 3 are required (100 points, validation at 60/100), exercises 4 to 6 are bonus (+10 each).

@@ -74,7 +74,7 @@ async def test_exact_cache():
     # Test prompt
     test_request = {
         "prompt": "What is the capital of France?",
-        "model": "groq-kimi-primary",
+        "model": "groq-primary",
         "temperature": 0.7,
         "max_tokens": 100
     }
@@ -138,14 +138,14 @@ async def test_semantic_cache():
     
     test_request1 = {
         "prompt": prompt1,
-        "model": "groq-kimi-primary",
+        "model": "groq-primary",
         "temperature": 0.7,
         "max_tokens": 100
     }
     
     test_request2 = {
         "prompt": prompt2,
-        "model": "groq-kimi-primary",
+        "model": "groq-primary",
         "temperature": 0.7,
         "max_tokens": 100
     }

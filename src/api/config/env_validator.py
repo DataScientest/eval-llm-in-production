@@ -2,6 +2,9 @@
 
 This module keeps startup usable without giving away the Exercise 1 solution.
 It only emits warnings for obviously unsafe values instead of failing fast.
+
+TODO Exercise 1: fail fast instead of warning (missing secret, default value,
+fewer than 32 characters). See docs/EXAM.md, Exercise 1.
 """
 
 import logging
